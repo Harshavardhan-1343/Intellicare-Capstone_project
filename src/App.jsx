@@ -58,6 +58,7 @@ import FeaturesSection from "./components/FeaturesSection";
 import TriageSection from "./components/TriageSection";
 import Footer from "./components/Footer";
 import ChatbotPage from "./components/ChatbotPage";
+import ReportPage from './components/ReportPage';
 
 function HomeContent() {
   return (
@@ -100,6 +101,7 @@ function App() {
           <Routes>
             <Route path="/" element={<HomeContent />} />
             <Route path="/chatbot" element={<ChatbotPage />} />
+            <Route path="/report" element={<ReportPage />} />
           </Routes>
         </motion.div>
       )}
