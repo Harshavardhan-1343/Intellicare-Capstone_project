@@ -28,7 +28,7 @@ export default function Chatbot() {
     }
   }, [input]);
 
-  const sendMessage = async () => {
+    const sendMessage = async () => {
     const text = input.trim();
     if (!text) return;
     setInput("");
@@ -58,6 +58,7 @@ export default function Chatbot() {
 
       const botText = data.response || "No response.";
       const isFinal = data.is_final || false;
+      const isRejected = data.rejected || false;  // NEW: Check if rejected
       const diagnosisData = data.diagnosis_data;
       const report = data.report;
 
@@ -65,8 +66,18 @@ export default function Chatbot() {
         setSessionId(data.session_id);
       }
 
-      // NEW: If diagnosis is complete, show custom message instead of diagnosis
-      if (isFinal) {
+      // NEW: Handle rejection - just show message, don't show diagnosis
+      if (isFinal && isRejected) {
+        setMessages(m => [...m, {
+          role: "bot",
+          text: botText,
+          isFinal: false,  // Don't show as final/diagnosis
+          isRejected: true
+        }]);
+        setIsComplete(false);  // Don't show report button
+      }
+      // Handle normal diagnosis completion
+      else if (isFinal && !isRejected) {
         setMessages(m => [...m, {
           role: "bot",
           text: "Your conditions have been analyzed and results are ready. Please click the 'View Report' button below to see your detailed medical assessment.",
@@ -80,9 +91,10 @@ export default function Chatbot() {
           patientData: diagnosisData?.patient || {}
         });
         
-        setIsComplete(true);  // Mark as complete
-      } else {
-        // Normal conversation message
+        setIsComplete(true);
+      }
+      // Normal conversation message
+      else {
         setMessages(m => [...m, {
           role: "bot",
           text: botText,

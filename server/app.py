@@ -122,23 +122,7 @@ def health():
 def chat():
     """
     Main chat endpoint - handles conversation with session management
-    
-    Request body:
-    {
-        "message": "user message",
-        "session_id": "optional-session-id"
-    }
-    
-    Response:
-    {
-        "session_id": "uuid",
-        "response": "assistant response",
-        "is_final": false,
-        "diagnosis_data": {...} (only if is_final=true),
-        "report": "..." (only if is_final=true)
-    }
     """
-    # Validate request
     try:
         data = request.get_json(force=True)
     except Exception:
@@ -148,22 +132,19 @@ def chat():
     user_msg = (data.get("message") or "").strip()
     session_id = data.get("session_id")
 
-    # Validate message
     if not user_msg:
         return jsonify({"error": "Message is required."}), 400
     if len(user_msg) > MAX_INPUT_LENGTH:
         return jsonify({"error": f"Message too long. Maximum length is {MAX_INPUT_LENGTH} characters."}), 400
 
-    # Check for orchestrator availability
     if MedicalOrchestrator is None:
         logger.error("MedicalOrchestrator not available")
         return jsonify({"error": "Orchestrator module not available. Please check server configuration."}), 503
 
-    # Emergency detection - prioritize immediate safety
+    # Emergency detection
     if detect_emergency(user_msg):
         logger.warning(f"Emergency detected (redacted): {redact_pii(user_msg)}")
         
-        # Create emergency response
         emergency_response = {
             "session_id": session_id or str(uuid.uuid4()),
             "response": "⚠️ This sounds like a medical emergency. Please call emergency services immediately (911 in US) or go to the nearest emergency department. Do not wait for online consultation.",
@@ -184,7 +165,6 @@ def chat():
     logger.info(f"Chat request (redacted): {redact_pii(user_msg)[:500]}")
 
     try:
-        # Initialize default orchestrator if needed
         initialize_default_orchestrator()
 
         # Get or create session
@@ -201,7 +181,6 @@ def chat():
         # Process message through orchestrator
         result = orchestrator.chat(user_msg)
         
-        # Handle the 3-tuple return format (response, is_final, report)
         if len(result) == 3:
             response, is_final, report = result
         else:
@@ -216,49 +195,60 @@ def chat():
             "report": None
         }
         
-        # If conversation is complete, get diagnosis data and cleanup
+        # NEW: Check if this is a rejection (invalid input) vs actual diagnosis
         if is_final:
-            logger.info(f"Session {session_id} completed, generating diagnosis")
-            
-            try:
-                # Get diagnosis data from orchestrator
-                diagnosis_data = orchestrator.get_diagnosis_data()
+            # Check if response contains rejection message (starts with warning emoji)
+            if response.startswith("⚠️ I'm a medical symptom assessment assistant"):
+                logger.info(f"Session {session_id} rejected due to non-medical input")
+                chat_response["is_final"] = True
+                chat_response["rejected"] = True  # NEW: Flag for frontend
+                chat_response["diagnosis_data"] = None
+                chat_response["report"] = None
                 
-                # Add triage level name for frontend
-                if diagnosis_data and 'triage_level' in diagnosis_data:
-                    triage_names = {
-                        1: "IMMEDIATE EMERGENCY",
-                        2: "URGENT",
-                        3: "PRIORITY",
-                        4: "ROUTINE",
-                        5: "NON-URGENT"
+                # Clean up session
+                if session_id in sessions:
+                    del sessions[session_id]
+                    logger.info(f"Session {session_id} cleaned up after rejection")
+            else:
+                # This is actual diagnosis completion
+                logger.info(f"Session {session_id} completed, generating diagnosis")
+                
+                try:
+                    diagnosis_data = orchestrator.get_diagnosis_data()
+                    
+                    if diagnosis_data and 'triage_level' in diagnosis_data:
+                        triage_names = {
+                            1: "IMMEDIATE EMERGENCY",
+                            2: "URGENT",
+                            3: "PRIORITY",
+                            4: "ROUTINE",
+                            5: "NON-URGENT"
+                        }
+                        diagnosis_data['triage_level_name'] = triage_names.get(
+                            diagnosis_data['triage_level'], 
+                            "UNKNOWN"
+                        )
+                        diagnosis_data['recommendation'] = diagnosis_data.get('triage_message', '')
+                    
+                    chat_response["diagnosis_data"] = diagnosis_data
+                    chat_response["report"] = report
+                    
+                except Exception as e:
+                    logger.exception(f"Error generating diagnosis data: {e}")
+                    chat_response["diagnosis_data"] = {
+                        "error": "Could not generate diagnosis data",
+                        "triage_level": 5,
+                        "triage_level_name": "UNKNOWN",
+                        "diagnoses": [],
+                        "department": "General Medicine",
+                        "triage_message": "Please consult a healthcare professional"
                     }
-                    diagnosis_data['triage_level_name'] = triage_names.get(
-                        diagnosis_data['triage_level'], 
-                        "UNKNOWN"
-                    )
-                    # Also add recommendation (alias for triage_message)
-                    diagnosis_data['recommendation'] = diagnosis_data.get('triage_message', '')
+                    chat_response["report"] = report
                 
-                chat_response["diagnosis_data"] = diagnosis_data
-                chat_response["report"] = report
-                
-            except Exception as e:
-                logger.exception(f"Error generating diagnosis data: {e}")
-                chat_response["diagnosis_data"] = {
-                    "error": "Could not generate diagnosis data",
-                    "triage_level": 5,
-                    "triage_level_name": "UNKNOWN",
-                    "diagnoses": [],
-                    "department": "General Medicine",
-                    "triage_message": "Please consult a healthcare professional"
-                }
-                chat_response["report"] = report  # Still include report if available
-            
-            # Clean up session after diagnosis
-            if session_id in sessions:
-                del sessions[session_id]
-                logger.info(f"Session {session_id} cleaned up")
+                # Clean up session after diagnosis
+                if session_id in sessions:
+                    del sessions[session_id]
+                    logger.info(f"Session {session_id} cleaned up")
         
         logger.info(f"Response generated for session {session_id}: {redact_pii(response)[:200]}")
         return jsonify(chat_response), 200
