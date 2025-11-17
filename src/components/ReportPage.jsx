@@ -23,7 +23,7 @@ export default function ReportPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `medical-report-${new Date().toISOString().split('T')[0]}.txt`;
+    a.download = `intellicare-report-${new Date().toISOString().split('T')[0]}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -36,7 +36,7 @@ export default function ReportPage() {
     if (navigator.share && reportData) {
       try {
         await navigator.share({
-          title: 'Medical Report',
+          title: 'IntelliCare Medical Report',
           text: 'Medical Assessment Report',
           url: window.location.href
         });
@@ -48,7 +48,7 @@ export default function ReportPage() {
 
   if (!reportData) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-[#0a0a0a] via-[#1a1a2e] to-[#16213e] text-gray-100">
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-[#1a2332] via-[#243447] to-[#2d3e54] text-gray-100">
         <div className="text-center">
           <div className="animate-spin w-16 h-16 border-4 border-cyan-500 border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="text-gray-400">Loading report...</p>
@@ -60,8 +60,8 @@ export default function ReportPage() {
   const { diagnosisData, timestamp, patientData } = reportData;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0a0a0a] via-[#1a1a2e] to-[#16213e] text-gray-100">
-      {/* Header */}
+    <div className="min-h-screen bg-gradient-to-br from-[#1a2332] via-[#243447] to-[#2d3e54] text-gray-100">
+      {/* Header - Sticky */}
       <div className="sticky top-0 z-10 backdrop-blur-xl bg-black/40 border-b border-white/10 shadow-lg print:hidden">
         <div className="px-6 py-4 flex justify-between items-center">
           <button
@@ -69,7 +69,7 @@ export default function ReportPage() {
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition-all duration-300 hover:scale-105 group"
           >
             <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-            <span className="text-sm font-medium">Back to Home</span>
+            <span className="text-sm font-medium">Back to home</span>
           </button>
 
           <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
@@ -102,9 +102,9 @@ export default function ReportPage() {
         </div>
       </div>
 
-      {/* Report Content */}
-      <div className="px-6 py-8">
-        <div className="max-w-5xl mx-auto space-y-6">
+      {/* Report Content - Scrollable */}
+      <div className="px-6 py-8 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)' }}>
+        <div className="max-w-5xl mx-auto space-y-6 pb-8">
           {/* Report Header */}
           <div className="glassmorphism-card p-8 rounded-2xl border-l-4 border-cyan-500">
             <div className="flex items-start justify-between mb-6">
@@ -127,7 +127,7 @@ export default function ReportPage() {
 
             {/* Patient Info */}
             {patientData && (
-              <div className="grid grid-cols-3 gap-4 pt-6 border-t border-white/10">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-6 border-t border-white/10">
                 {patientData.age && (
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
@@ -156,7 +156,7 @@ export default function ReportPage() {
                   </div>
                   <div>
                     <div className="text-xs text-gray-400">Report ID</div>
-                    <div className="font-mono text-xs">{reportData.report?.match(/MED-\d+-\d+/)?.[0] || 'N/A'}</div>
+                    <div className="font-mono text-xs">{`IC-${Date.now().toString().slice(-8)}`}</div>
                   </div>
                 </div>
               </div>
@@ -189,13 +189,13 @@ export default function ReportPage() {
                     diagnosisData.triage_level === 3 ? 'text-yellow-400' :
                     'text-green-400'
                   }`}>
-                    Level {diagnosisData.triage_level}/5 - {diagnosisData.triage_level_name}
+                    Level {diagnosisData.triage_level}/5 {diagnosisData.triage_level_name && `- ${diagnosisData.triage_level_name}`}
                   </div>
                 </div>
               </div>
               <div className="p-4 bg-white/5 rounded-xl">
                 <div className="text-sm font-semibold text-gray-300 mb-2">Recommended Action:</div>
-                <div className="text-base text-white">{diagnosisData.recommendation}</div>
+                <div className="text-base text-white">{diagnosisData.triage_message || diagnosisData.recommendation}</div>
               </div>
             </div>
           )}
@@ -218,7 +218,7 @@ export default function ReportPage() {
                         <span className="text-lg font-bold text-cyan-400">{idx + 1}</span>
                       </div>
                       <div className="flex-1">
-                        <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                           <h4 className="text-lg font-semibold text-white">{diag.disease}</h4>
                           {diag.probability && (
                             <div className="flex items-center gap-2">
@@ -277,7 +277,7 @@ export default function ReportPage() {
               <h3 className="text-lg font-bold text-white mb-4">Reported Symptoms</h3>
               <div className="flex flex-wrap gap-2">
                 {patientData.symptoms.map((symptom, idx) => (
-                  <span key={idx} className="px-4 py-2 rounded-xl bg-white/10 border border-white/20 text-sm">
+                  <span key={idx} className="px-4 py-2 rounded-xl bg-white/10 border border-white/20 text-sm capitalize">
                     {symptom}
                   </span>
                 ))}
@@ -304,12 +304,12 @@ export default function ReportPage() {
 
           {/* Footer */}
           <div className="text-center text-sm text-gray-500 py-8">
-            <p>Generated by IntelliCare</p>
+            <p>Generated by IntelliCare AI Medical Assistant</p>
           </div>
         </div>
       </div>
 
-      {/* Print Styles */}
+      {/* Styles */}
       <style jsx>{`
         @media print {
           .print\:hidden {
@@ -347,6 +347,24 @@ export default function ReportPage() {
           backdrop-filter: blur(20px);
           border: 1px solid rgba(255, 255, 255, 0.1);
           box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+          width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.05);
+        }
+
+        ::-webkit-scrollbar-thumb {
+          background: rgba(6, 182, 212, 0.5);
+          border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+          background: rgba(6, 182, 212, 0.7);
         }
       `}</style>
     </div>

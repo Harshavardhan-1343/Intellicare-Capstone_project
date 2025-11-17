@@ -4,7 +4,6 @@ import re
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass, asdict
-import pickle
 
 @dataclass
 class PatientProfile:
@@ -20,6 +19,7 @@ class PatientProfile:
     recent_travel: bool = False
     dietary_changes: bool = False
     fever: bool = False
+    is_pregnant: Optional[bool] = None
     
     def __post_init__(self):
         if self.symptoms is None:
@@ -34,7 +34,7 @@ class PatientProfile:
 
 
 class OllamaClient:
-    """Ollama API client for MedLlama2"""
+    """Ollama API client"""
     
     def __init__(self, model_name="medllama2", base_url="http://localhost:11434"):
         self.model_name = model_name
@@ -53,7 +53,7 @@ class OllamaClient:
             )
     
     def generate(self, prompt: str, max_tokens: int = 150, temperature: float = 0.7) -> str:
-        """Generate text from MedLlama2"""
+        """Generate text from model"""
         payload = {
             "model": self.model_name,
             "prompt": prompt,
@@ -61,7 +61,7 @@ class OllamaClient:
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
-                "stop": ["\n\n", "User:", "Patient:"]  # Stop at conversation breaks
+                "stop": ["\n\n", "User:", "Patient:", "Assistant:", "Doctor:", "["]
             }
         }
         
@@ -80,30 +80,163 @@ class SymptomExtractor:
     """Extract and validate symptoms from patient responses"""
     
     SYMPTOM_DATABASE = {
-        # Respiratory
+        # ==================== RESPIRATORY ====================
         'cough', 'shortness of breath', 'wheezing', 'chest pain', 'sore throat',
-        'runny nose', 'congestion', 'sneezing',
+        'runny nose', 'congestion', 'sneezing', 'cold', 'stuffy nose',
+        'difficulty breathing', 'tight chest', 'phlegm', 'mucus', 'chest tightness',
+        'chronic cough', 'dry cough', 'wet cough', 'bloody cough', 'hemoptysis',
+        'hoarseness', 'voice loss', 'laryngitis', 'stridor', 'rapid breathing',
+        'shallow breathing', 'labored breathing', 'chest congestion', 'postnasal drip',
+        'sinus pressure', 'nasal discharge', 'sniffles', 'nose bleed', 'epistaxis',
         
-        # Gastrointestinal
+        # ==================== GASTROINTESTINAL ====================
         'nausea', 'vomiting', 'diarrhea', 'constipation', 'abdominal pain',
-        'bloating', 'loss of appetite', 'heartburn',
+        'bloating', 'loss of appetite', 'heartburn', 'morning sickness', 'nauseous',
+        'stomach pain', 'stomach ache', 'belly pain', 'cramping', 'gas',
+        'indigestion', 'acid reflux', 'gerd', 'upset stomach', 'queasy',
+        'bloody stool', 'black stool', 'tarry stool', 'rectal bleeding',
+        'blood in stool', 'mucus in stool', 'pale stool', 'fatty stool',
+        'foul smelling stool', 'watery diarrhea', 'chronic diarrhea',
+        'abdominal cramps', 'stomach cramps', 'intestinal pain', 'bowel pain',
+        'difficulty swallowing', 'dysphagia', 'feeling full', 'early satiety',
+        'excessive burping', 'belching', 'flatulence', 'abdominal distension',
+        'liver pain', 'jaundice', 'yellowing', 'yellow eyes', 'yellow skin',
+        'loss of taste', 'metallic taste', 'bitter taste', 'food aversion',
         
-        # Pain
+        # ==================== PAIN (Specific Locations) ====================
         'headache', 'back pain', 'joint pain', 'muscle pain', 'neck pain',
+        'leg pain', 'knee pain', 'ankle pain', 'shoulder pain', 'hip pain',
+        'pelvic pain', 'cramping', 'cramps', 'arm pain', 'wrist pain',
+        'hand pain', 'finger pain', 'toe pain', 'foot pain', 'heel pain',
+        'elbow pain', 'groin pain', 'thigh pain', 'calf pain', 'shin pain',
+        'lower back pain', 'upper back pain', 'middle back pain', 'tailbone pain',
+        'jaw pain', 'facial pain', 'ear pain', 'eye pain', 'tooth pain',
+        'throat pain', 'chest pain', 'rib pain', 'side pain', 'flank pain',
+        'sciatic pain', 'sciatica', 'nerve pain', 'burning pain', 'shooting pain',
+        'stabbing pain', 'throbbing pain', 'dull ache', 'sharp pain', 'chronic pain',
+        'migraine', 'cluster headache', 'tension headache', 'sinus headache',
         
-        # Systemic
+        # ==================== SYSTEMIC / GENERAL ====================
         'fever', 'chills', 'fatigue', 'weakness', 'sweating', 'weight loss',
-        'dizziness', 'fainting',
+        'dizziness', 'fainting', 'tired', 'exhaustion', 'dizzy', 'weak',
+        'night sweats', 'cold sweats', 'hot flashes', 'flushed', 'feverish',
+        'temperature', 'high temperature', 'low grade fever', 'chills and fever',
+        'malaise', 'lethargy', 'sluggish', 'lack of energy', 'always tired',
+        'weakness in limbs', 'general weakness', 'weight gain', 'rapid weight loss',
+        'unintentional weight loss', 'appetite loss', 'increased appetite',
+        'dehydration', 'excessive thirst', 'dry mouth', 'increased urination',
+        'frequent urination', 'decreased urination', 'dark urine', 'bloody urine',
+        'painful urination', 'burning urination', 'urgency', 'incontinence',
+        'bed wetting', 'loss of consciousness', 'fainting spells', 'syncope',
+        'presyncope', 'lightheaded', 'feeling faint', 'vertigo', 'spinning',
+        'balance problems', 'unsteady', 'loss of balance', 'falls', 'stumbling',
         
-        # Neurological
+        # ==================== NEUROLOGICAL ====================
         'confusion', 'numbness', 'tingling', 'vision changes', 'hearing loss',
-        'seizures', 'tremors',
+        'seizures', 'tremors', 'memory loss', 'forgetfulness', 'disorientation',
+        'brain fog', 'difficulty concentrating', 'loss of focus', 'mental fog',
+        'blurred vision', 'double vision', 'diplopia', 'vision loss', 'blind spots',
+        'floaters', 'flashing lights', 'light sensitivity', 'photophobia',
+        'ringing in ears', 'tinnitus', 'ear ringing', 'muffled hearing',
+        'pins and needles', 'burning sensation', 'electric shock sensation',
+        'paralysis', 'weakness in limbs', 'muscle weakness', 'difficulty walking',
+        'difficulty speaking', 'slurred speech', 'speech problems', 'aphasia',
+        'trembling', 'shaking', 'twitching', 'muscle spasms', 'involuntary movements',
+        'loss of coordination', 'clumsiness', 'difficulty with balance',
+        'facial drooping', 'facial numbness', 'difficulty swallowing',
+        'cognitive decline', 'memory problems', 'amnesia', 'blackouts',
         
-        # Skin
+        # ==================== CARDIOVASCULAR ====================
+        'palpitations', 'irregular heartbeat', 'chest pressure', 'rapid heartbeat',
+        'slow heartbeat', 'racing heart', 'fluttering', 'heart flutter',
+        'skipped heartbeat', 'pounding heart', 'tachycardia', 'bradycardia',
+        'chest discomfort', 'pressure in chest', 'squeezing chest', 'tight chest',
+        'angina', 'heart pain', 'radiating pain', 'arm pain with chest pain',
+        'cold hands', 'cold feet', 'blue fingers', 'blue toes', 'cyanosis',
+        'swollen ankles', 'swollen legs', 'edema', 'leg swelling', 'foot swelling',
+        'poor circulation', 'claudication', 'leg pain when walking',
+        
+        # ==================== DERMATOLOGICAL / SKIN ====================
         'rash', 'itching', 'swelling', 'bruising', 'pale skin',
+        'hives', 'welts', 'red spots', 'skin lesions', 'bumps',
+        'blisters', 'sores', 'ulcers', 'boils', 'abscess',
+        'dry skin', 'flaky skin', 'peeling skin', 'cracked skin',
+        'eczema', 'psoriasis', 'acne', 'pimples', 'blackheads',
+        'skin discoloration', 'dark spots', 'white patches', 'vitiligo',
+        'moles', 'new mole', 'changing mole', 'bleeding mole',
+        'itchy skin', 'burning skin', 'skin burning', 'skin pain',
+        'sensitive skin', 'red skin', 'inflamed skin', 'skin inflammation',
+        'skin infection', 'pus', 'discharge from skin', 'oozing',
+        'hair loss', 'alopecia', 'bald patches', 'thinning hair',
+        'nail changes', 'brittle nails', 'discolored nails', 'nail pain',
         
-        # Cardiovascular
-        'palpitations', 'irregular heartbeat', 'chest pressure',
+        # ==================== GYNECOLOGICAL / PREGNANCY-RELATED ====================
+        'pelvic pain', 'vaginal bleeding', 'missed period', 'cramping',
+        'breast tenderness', 'tender breasts', 'spotting', 'late period', 'no period',
+        'heavy bleeding', 'heavy period', 'menorrhagia', 'light period',
+        'irregular period', 'painful period', 'dysmenorrhea', 'menstrual cramps',
+        'abnormal discharge', 'vaginal discharge', 'foul discharge', 'bloody discharge',
+        'vaginal itching', 'vaginal burning', 'vaginal pain', 'painful intercourse',
+        'breast pain', 'breast lump', 'nipple discharge', 'swollen breasts',
+        'morning sickness', 'pregnancy symptoms', 'breast changes',
+        'ovulation pain', 'mid-cycle pain', 'pms', 'premenstrual syndrome',
+        'hot flashes', 'mood swings', 'irritability', 'menopause symptoms',
+        
+        # ==================== URINARY ====================
+        'frequent urination', 'urgent urination', 'painful urination', 'burning urination',
+        'difficulty urinating', 'weak stream', 'dribbling', 'urinary retention',
+        'blood in urine', 'hematuria', 'dark urine', 'cloudy urine',
+        'foul smelling urine', 'urinary incontinence', 'leaking urine',
+        'kidney pain', 'flank pain', 'bladder pain', 'bladder pressure',
+        
+        # ==================== MUSCULOSKELETAL ====================
+        'stiff joints', 'joint stiffness', 'swollen joints', 'joint swelling',
+        'muscle aches', 'body aches', 'sore muscles', 'muscle soreness',
+        'muscle cramps', 'charlie horse', 'leg cramps', 'muscle spasms',
+        'back stiffness', 'neck stiffness', 'limited range of motion',
+        'difficulty moving', 'inability to bend', 'difficulty standing',
+        'difficulty sitting', 'difficulty lying down', 'pain when moving',
+        'arthritis pain', 'gout', 'bursitis', 'tendonitis',
+        
+        # ==================== PSYCHIATRIC / MENTAL HEALTH ====================
+        'anxiety', 'panic', 'panic attacks', 'nervousness', 'worry',
+        'depression', 'sadness', 'hopelessness', 'feeling down', 'low mood',
+        'mood changes', 'irritability', 'anger', 'agitation', 'restlessness',
+        'insomnia', 'sleep problems', 'difficulty sleeping', 'cant sleep',
+        'excessive sleeping', 'sleeping too much', 'drowsiness', 'sleepiness',
+        'nightmares', 'night terrors', 'sleep disturbances',
+        'suicidal thoughts', 'thoughts of self harm', 'wanting to die',
+        'hallucinations', 'hearing voices', 'seeing things', 'delusions',
+        
+        # ==================== ENDOCRINE / METABOLIC ====================
+        'excessive hunger', 'always hungry', 'polyphagia', 'increased thirst',
+        'excessive thirst', 'polydipsia', 'frequent urination', 'polyuria',
+        'heat intolerance', 'cold intolerance', 'always cold', 'always hot',
+        'thyroid problems', 'goiter', 'neck swelling', 'neck lump',
+        
+        # ==================== ALLERGIC / IMMUNOLOGIC ====================
+        'allergic reaction', 'allergy symptoms', 'hay fever', 'seasonal allergies',
+        'food allergy', 'drug allergy', 'anaphylaxis', 'severe allergic reaction',
+        'hives', 'itchy eyes', 'watery eyes', 'red eyes', 'eye redness',
+        'swollen face', 'facial swelling', 'lip swelling', 'tongue swelling',
+        'difficulty breathing from allergy', 'wheezing from allergy',
+        
+        # ==================== INFECTIOUS / FEVER-RELATED ====================
+        'infection symptoms', 'signs of infection', 'infected wound',
+        'pus', 'abscess', 'swollen lymph nodes', 'swollen glands',
+        'tender lymph nodes', 'lumps in neck', 'lumps under arm',
+        'lumps in groin', 'body aches with fever', 'chills with fever',
+        
+        # ==================== EMERGENCY / SEVERE ====================
+        'severe pain', 'excruciating pain', 'unbearable pain', 'worst pain ever',
+        'crushing chest pain', 'sudden severe headache', 'thunderclap headache',
+        'stroke symptoms', 'facial drooping', 'arm weakness', 'speech difficulty',
+        'seizure', 'convulsions', 'fitting', 'loss of consciousness',
+        'unresponsive', 'passed out', 'collapsed', 'heart attack symptoms',
+        'cant breathe', 'choking', 'severe bleeding', 'heavy bleeding',
+        'coughing up blood', 'vomiting blood', 'hematemesis',
+        'severe burn', 'severe injury', 'broken bone', 'fracture',
+        'head injury', 'concussion', 'unconscious', 'unresponsive',
     }
     
     def extract(self, text: str) -> List[str]:
@@ -115,21 +248,126 @@ class SymptomExtractor:
         for symptom in self.SYMPTOM_DATABASE:
             if symptom in text_lower:
                 found.append(symptom)
+                print(f"[DEBUG] Symptom found: {symptom}")
         
-        # Common variations
+        # Common variations - EXPANDED
         variations = {
+            # Respiratory
+            'can\'t breathe': 'difficulty breathing',
+            'cannot breathe': 'difficulty breathing',
+            'hard to breathe': 'difficulty breathing',
+            'trouble breathing': 'difficulty breathing',
+            'out of breath': 'shortness of breath',
+            'winded': 'shortness of breath',
+            'stuffy': 'congestion',
+            'blocked nose': 'congestion',
+            'nose blocked': 'congestion',
+            
+            # GI
             'stomach pain': 'abdominal pain',
+            'stomach ache': 'abdominal pain',
+            'belly ache': 'abdominal pain',
+            'tummy ache': 'abdominal pain',
             'throwing up': 'vomiting',
+            'throw up': 'vomiting',
+            'puking': 'vomiting',
             'upset stomach': 'nausea',
+            'feel sick': 'nausea',
+            'feeling sick': 'nausea',
+            'queasy': 'nausea',
+            'sick to stomach': 'nausea',
+            'loose stool': 'diarrhea',
+            'runny stool': 'diarrhea',
+            'runs': 'diarrhea',
+            'the runs': 'diarrhea',
+            
+            # Temperature
             'temperature': 'fever',
             'hot': 'fever',
+            'feverish': 'fever',
+            'burning up': 'fever',
+            'high temp': 'fever',
+            
+            # Energy
             'tired': 'fatigue',
+            'exhausted': 'fatigue',
+            'worn out': 'fatigue',
+            'drained': 'fatigue',
+            'no energy': 'fatigue',
+            'wiped out': 'fatigue',
+            
+            # Dizziness
             'dizzy': 'dizziness',
+            'lightheaded': 'dizziness',
+            'light headed': 'dizziness',
+            'head spinning': 'dizziness',
+            'room spinning': 'vertigo',
+            
+            # Pain
+            'sore': 'pain',
+            'aching': 'pain',
+            'hurts': 'pain',
+            'painful': 'pain',
+            
+            # Pregnancy/Period
+            'late period': 'missed period',
+            'no period': 'missed period',
+            'period late': 'missed period',
+            'haven\'t had period': 'missed period',
+            'skipped period': 'missed period',
+            'sore breasts': 'breast tenderness',
+            'tender breasts': 'breast tenderness',
+            'painful breasts': 'breast tenderness',
+            
+            # Mental
+            'can\'t sleep': 'insomnia',
+            'cannot sleep': 'insomnia',
+            'trouble sleeping': 'insomnia',
+            'anxious': 'anxiety',
+            'nervous': 'anxiety',
+            'worried': 'anxiety',
+            'depressed': 'depression',
+            'sad': 'depression',
+            
+            # Skin
+            'bumps': 'rash',
+            'spots': 'rash',
+            'blemishes': 'rash',
+            'itchy': 'itching',
+            'scratchy': 'itching',
+            
+            # Movement
+            'difficulty walking': 'leg pain',
+            'hard to walk': 'leg pain',
+            'trouble walking': 'leg pain',
+            'can\'t walk': 'leg pain',
+            'difficulty moving': 'joint pain',
+            
+            # Vision/Hearing
+            'blurry vision': 'blurred vision',
+            'fuzzy vision': 'blurred vision',
+            'can\'t see clearly': 'blurred vision',
+            'ringing ears': 'tinnitus',
+            'ears ringing': 'tinnitus',
+            'buzzing in ears': 'tinnitus',
+            
+            # Urinary
+            'burning when peeing': 'burning urination',
+            'painful urination': 'burning urination',
+            'hurts to pee': 'burning urination',
+            'frequent peeing': 'frequent urination',
+            'peeing a lot': 'frequent urination',
         }
         
         for variant, canonical in variations.items():
             if variant in text_lower and canonical not in found:
                 found.append(canonical)
+                print(f"[DEBUG] Symptom found via variation '{variant}': {canonical}")
+        
+        if found:
+            print(f"[DEBUG] Total symptoms extracted: {found}")
+        else:
+            print(f"[DEBUG] No symptoms found in: '{text_lower}'")
         
         return list(set(found))
 
@@ -139,97 +377,102 @@ class ConversationState:
     
     REQUIRED_INFO = [
         'age',
+        'gender',
         'primary_symptoms',
         'symptom_duration',
         'symptom_severity',
-        'recent_travel',
-        'medications',
         'medical_history',
-        'dietary_changes'
+    ]
+    
+    CRITICAL_INFO = [
+        'primary_symptoms',
+        'symptom_duration',
+        'symptom_severity',
+        'medical_history',
+    ]
+    
+    OPTIONAL_INFO = [
+        'age',
+        'gender',
     ]
     
     def __init__(self):
         self.collected = set()
+        self.skipped = set()
         self.turn_count = 0
-        self.max_turns = 12  # Maximum questions before forcing diagnosis
+        self.symptom_specific_questions_asked = 0
+        self.max_symptom_questions = 3
+        self.max_turns = 12
+        self.pregnancy_question_asked = False
+        self.question_attempt_count = {}
+        self.last_question_asked = None  # NEW: Track last question to avoid repeats
+        self.symptom_question_attempts = 0  # NEW: Track attempts for current symptom question
     
     def mark_collected(self, info_type: str):
         """Mark information as collected"""
         self.collected.add(info_type)
+        print(f"[DEBUG] Marked as collected: {info_type}. Total collected: {self.collected}")
+    
+    def mark_skipped(self, info_type: str):
+        """Mark information as skipped by user"""
+        if info_type in self.OPTIONAL_INFO:
+            self.skipped.add(info_type)
+            print(f"[DEBUG] User chose to skip: {info_type}")
+        else:
+            print(f"[DEBUG] Cannot skip {info_type} - it's required")
+    
+    def increment_attempt(self, info_type: str) -> int:
+        """Increment and return attempt count for a question"""
+        if info_type not in self.question_attempt_count:
+            self.question_attempt_count[info_type] = 0
+        self.question_attempt_count[info_type] += 1
+        return self.question_attempt_count[info_type]
+    
+    def mark_symptom_question_asked(self):
+        """Mark that a symptom-specific question was asked and answered"""
+        self.symptom_specific_questions_asked += 1
+        self.symptom_question_attempts = 0  # Reset attempts for next question
+        print(f"[DEBUG] Completed symptom question {self.symptom_specific_questions_asked}/3")
     
     def is_complete(self) -> bool:
         """Check if we have enough information"""
-        # Must have at least these
-        critical = {'age', 'primary_symptoms', 'symptom_duration'}
-        has_critical = critical.issubset(self.collected)
+        critical_collected = all(
+            info in self.collected for info in self.CRITICAL_INFO
+        )
         
-        # Either have all info, or reached turn limit with minimum info
+        optional_handled = all(
+            info in self.collected or info in self.skipped 
+            for info in self.OPTIONAL_INFO
+        )
+        
+        enough_symptom_questions = self.symptom_specific_questions_asked >= self.max_symptom_questions
+        
         return (
-            has_critical and len(self.collected) >= 6
+            critical_collected and optional_handled and enough_symptom_questions
         ) or (
-            self.turn_count >= self.max_turns and has_critical
+            self.turn_count >= self.max_turns and critical_collected
         )
     
     def get_missing_info(self) -> List[str]:
         """Get list of missing required information"""
-        return [info for info in self.REQUIRED_INFO if info not in self.collected]
+        return [
+            info for info in self.REQUIRED_INFO 
+            if info not in self.collected and info not in self.skipped
+        ]
+    
+    def can_ask_symptom_question(self) -> bool:
+        """Check if we can ask more symptom-specific questions"""
+        return self.symptom_specific_questions_asked < self.max_symptom_questions
 
 
 class QuestionGenerator:
     """Generate appropriate questions based on conversation state"""
     
-    QUESTION_TEMPLATES = {
-        'greeting': [
-            "Hello! I'm here to help assess your symptoms. What brings you here today?",
-        ],
-        'age': [
-            "May I ask your age?",
-            "How old are you?",
-        ],
-        'primary_symptoms': [
-            "What symptoms are you experiencing?",
-            "Can you describe what you're feeling?",
-        ],
-        'symptom_duration': [
-            "How long have you been experiencing these symptoms?",
-            "When did these symptoms start?",
-        ],
-        'symptom_severity': [
-            "On a scale of 1-10, how severe would you rate your symptoms?",
-            "How much are these symptoms affecting your daily activities?",
-        ],
-        'recent_travel': [
-            "Have you traveled anywhere recently, either internationally or domestically?",
-            "Any recent trips or travels?",
-        ],
-        'medications': [
-            "Have you taken any medication for these symptoms?",
-            "Are you currently taking any medications?",
-        ],
-        'medical_history': [
-            "Do you have any known medical conditions or chronic illnesses?",
-            "Any previous medical history we should know about?",
-        ],
-        'dietary_changes': [
-            "Have you eaten anything unusual or outside your normal diet recently?",
-            "Any changes in your eating habits lately?",
-        ],
-        'pain_specific': [
-            "Can you describe the type of pain? Is it sharp, dull, throbbing, or burning?",
-            "Does the pain stay in one place or does it radiate?",
-            "What makes the pain better or worse?",
-        ],
-        'fever_check': [
-            "Do you have a fever? Have you measured your temperature?",
-        ],
-        'breathing_check': [
-            "Are you having any difficulty breathing?",
-        ],
-        'additional': [
-            "Is there anything else you think I should know?",
-            "Any other symptoms or concerns?",
-        ]
-    }
+    PREGNANCY_RELEVANT_SYMPTOMS = [
+        'nausea', 'vomiting', 'fatigue', 'missed period', 'abdominal pain',
+        'pelvic pain', 'cramping', 'vaginal bleeding', 'dizziness', 'weakness',
+        'morning sickness', 'tender breasts', 'breast tenderness'
+    ]
     
     def __init__(self, ollama_client: OllamaClient):
         self.ollama = ollama_client
@@ -244,79 +487,244 @@ class QuestionGenerator:
         
         # Greeting
         if state.turn_count == 0:
-            return self.QUESTION_TEMPLATES['greeting'][0]
+            return "Hello! I'm your medical assistant. Describe your symptoms and I'll help assess and triage your condition."
         
-        # Get missing info
         missing = state.get_missing_info()
+        print(f"[DEBUG] Missing info: {missing}")
+        print(f"[DEBUG] Skipped info: {state.skipped}")
+        print(f"[DEBUG] Collected info: {state.collected}")
+        print(f"[DEBUG] Current patient data - Age: {patient.age}, Gender: {patient.gender}, Duration: {patient.duration}, Severity: {patient.severity}, Medical History: {patient.medical_history}")
         
+        # Phase 1: Collect REQUIRED information (ONE at a time, in order)
+        if missing:
+            # Priority 1: Ask for age (OPTIONAL)
+            if 'age' in missing:
+                return "May I ask your age? (You can say 'skip' if you prefer not to share)"
+            
+            # Priority 2: Ask for gender (OPTIONAL)
+            if 'gender' in missing:
+                return "What is your gender? (You can say 'skip' if you prefer not to share)"
+            
+            # Priority 3: Ask for duration (REQUIRED)
+            if 'symptom_duration' in missing:
+                return "How long have you been experiencing these symptoms?"
+            
+            # Priority 4: Ask for severity (REQUIRED)
+            if 'symptom_severity' in missing:
+                return "On a scale of 1-10, how severe would you rate your symptoms?"
+            
+            # Priority 5: Ask for medical history (REQUIRED)
+            if 'medical_history' in missing:
+                print("[DEBUG] Asking mandatory medical history question")
+                return "Do you have any medical history or chronic conditions (like diabetes, hypertension, asthma, heart disease, etc.) that I should know about?"
+        
+        # PREGNANCY CHECK
         if not missing:
-            return None  # Ready to diagnose
+            is_female = patient.gender and patient.gender.lower() in ['female', 'woman', 'f']
+            is_childbearing_age = patient.age and 15 <= patient.age <= 50
+            has_relevant_symptoms = self._is_pregnancy_relevant(patient.symptoms)
+            
+            print(f"[DEBUG] Pregnancy check:")
+            print(f"  - Is female: {is_female} (gender: {patient.gender})")
+            print(f"  - Childbearing age: {is_childbearing_age} (age: {patient.age})")
+            print(f"  - Has relevant symptoms: {has_relevant_symptoms} (symptoms: {patient.symptoms})")
+            print(f"  - Already asked: {state.pregnancy_question_asked}")
+            
+            if (not state.pregnancy_question_asked and 
+                is_female and
+                has_relevant_symptoms):
+                
+                if patient.age is None:
+                    print("[DEBUG] Age unknown but asking pregnancy question due to relevant symptoms")
+                
+                state.pregnancy_question_asked = True
+                print("[DEBUG] Asking pregnancy question")
+                return "Is there any chance you could be pregnant, or are you currently pregnant? (You can say 'skip' if you prefer not to share)"
+            elif not state.pregnancy_question_asked:
+                print(f"[DEBUG] Skipping pregnancy question - Female: {is_female}, Age OK: {is_childbearing_age}, Symptoms relevant: {has_relevant_symptoms}")
         
-        # Prioritize critical information
-        priority_order = [
-            'primary_symptoms',
-            'age', 
-            'symptom_duration',
-            'symptom_severity',
-            'medications',
-            'recent_travel',
-            'medical_history',
-            'dietary_changes'
+        # Phase 2: Symptom-specific questions
+        if not missing and state.can_ask_symptom_question() and patient.symptoms:
+            if state.symptom_question_attempts >= 2:
+                print(f"[DEBUG] Moving on from current symptom question after 2 attempts")
+                state.mark_symptom_question_asked()
+            
+            if state.can_ask_symptom_question():
+                state.symptom_question_attempts += 1
+                print(f"[DEBUG] Generating symptom question {state.symptom_specific_questions_asked + 1}/3 (attempt {state.symptom_question_attempts})")
+                
+                question = self._generate_symptom_specific_question(patient, last_response, state)
+                
+                if question == state.last_question_asked:
+                    print(f"[DEBUG] Generated duplicate question, using fallback")
+                    question = self._get_fallback_symptom_question(patient, state)
+                
+                state.last_question_asked = question
+                return question
+        
+        # Ready to diagnose
+        print("[DEBUG] All information collected, ready to diagnose")
+        return None
+    
+    def _is_pregnancy_relevant(self, symptoms: List[str]) -> bool:
+        """Check if pregnancy question is relevant based on symptoms"""
+        if not symptoms:
+            print("[DEBUG] No symptoms to check")
+            return False
+        
+        symptom_str = ' '.join(symptoms).lower()
+        print(f"[DEBUG] Checking pregnancy relevance for: {symptom_str}")
+        
+        for preg_symptom in self.PREGNANCY_RELEVANT_SYMPTOMS:
+            if preg_symptom in symptom_str:
+                print(f"[DEBUG] Found pregnancy-relevant symptom: {preg_symptom}")
+                return True
+        
+        print("[DEBUG] No pregnancy-relevant symptoms found")
+        return False
+    
+    def _generate_symptom_specific_question(
+        self, 
+        patient: PatientProfile,
+        last_response: str,
+        state: ConversationState
+    ) -> str:
+        """Generate intelligent symptom-specific follow-up questions using LLM"""
+        
+        symptoms_str = ", ".join(patient.symptoms)
+        duration_str = patient.duration if patient.duration else "unknown duration"
+        severity_str = patient.severity if patient.severity else "unknown severity"
+        medical_history_str = ", ".join(patient.medical_history) if patient.medical_history else "none reported"
+        
+        # Build context of what we already know
+        known_info = f"""Patient already told us:
+- Symptoms: {symptoms_str}
+- Duration: {duration_str}
+- Severity: {severity_str}
+- Medical history: {medical_history_str}
+- Previous answer: "{last_response}"
+"""
+        
+        prompt = f"""You are a medical assistant asking follow-up questions about symptoms.
+
+{known_info}
+
+This is question {state.symptom_specific_questions_asked + 1} of 3.
+
+Generate ONE brief follow-up question to gather NEW information we don't already have.
+
+DO NOT ask about:
+- Duration (we already know: {duration_str})
+- Severity (we already know: {severity_str})
+- Medical history (we already know: {medical_history_str})
+
+Focus areas for this question:
+Question 1: Associated symptoms they haven't mentioned (fever, nausea, headache, etc.)
+Question 2: Timing and triggers (worse at certain times? triggered by activity?)
+Question 3: Impact and relief (what helps? how does it affect daily life?)
+
+Rules:
+- Keep under 20 words
+- Include examples in parentheses when helpful
+- Ask ONLY one question
+- Don't repeat what they already told us
+
+Question:"""
+        
+        question = self.ollama.generate(prompt, max_tokens=60, temperature=0.7)
+        question = self._clean_llm_response(question)
+        
+        # Validate question doesn't ask about duration/severity again
+        question_lower = question.lower()
+        if any(phrase in question_lower for phrase in ['how long', 'duration', 'how severe', 'rate', 'scale of']):
+            print("[DEBUG] Generated question asks about info we already have, using fallback")
+            return self._get_fallback_symptom_question(patient, state)
+        
+        if len(question) < 10 or len(question) > 250:
+            return self._get_fallback_symptom_question(patient, state)
+        
+        return question
+    
+    def _clean_llm_response(self, response: str) -> str:
+        """Clean LLM response while keeping helpful clarifying options in parentheses"""
+        
+        response = re.sub(r'^(Question:|Here\'s a question:|I would ask:|Ask:|Query:)', '', response, flags=re.IGNORECASE).strip()
+        response = re.sub(r'\[.*?\]', '', response)
+        
+        instruction_patterns = [
+            r'\(.*?taking notes.*?\)',
+            r'\(.*?preparing.*?\)',
+            r'\(.*?assessment.*?\)',
+            r'\(.*?while.*?\)',
+            r'\(.*?next step.*?\)',
+            r'\(.*?these questions.*?\)',
         ]
         
-        # Find next question to ask
-        next_topic = None
-        for topic in priority_order:
-            if topic in missing:
-                next_topic = topic
-                break
+        for pattern in instruction_patterns:
+            response = re.sub(pattern, '', response, flags=re.IGNORECASE)
         
-        if not next_topic and missing:
-            next_topic = missing[0]
+        sentences = response.split('.')
+        cleaned_sentences = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if sentence and not any(phrase in sentence.lower() for phrase in [
+                'taking notes', 'preparing for', 'next step in',
+                'these questions', 'ask these', 'mr.', 'mrs.', 'ms.',
+                'during the assessment', 'while examining'
+            ]):
+                cleaned_sentences.append(sentence)
         
-        # Special case: if pain symptoms, ask pain-specific questions
-        if any('pain' in s for s in patient.symptoms) and state.turn_count <= 8:
-            if 'pain_details' not in state.collected:
-                state.mark_collected('pain_details')
-                return self._naturalize_question(
-                    self.QUESTION_TEMPLATES['pain_specific'][0],
-                    last_response
-                )
+        response = '. '.join(cleaned_sentences).strip()
         
-        # Get template question
-        templates = self.QUESTION_TEMPLATES.get(next_topic, ['Could you tell me more?'])
-        base_question = templates[0]
+        if '?' in response:
+            first_question = response.split('?')[0] + '?'
+            response = first_question
         
-        # Naturalize the question using LLM
-        return self._naturalize_question(base_question, last_response)
-    
-    def _naturalize_question(self, question: str, last_response: str) -> str:
-        """Use MedLlama2 to make question sound more natural"""
+        response = response.rstrip('.,;:!')
         
-        if not last_response or len(last_response) < 5:
-            return question
-        
-        # Create prompt for natural transition
-        prompt = f"""You are a medical assistant. The patient just said: "{last_response}"
-
-Give a brief empathetic acknowledgment (1 short sentence), then ask: "{question}"
-
-Keep it conversational and caring. Response:"""
-        
-        response = self.ollama.generate(prompt, max_tokens=80, temperature=0.7)
-        
-        # Fallback if generation fails or is too long
-        if not response or len(response) < 10 or len(response) > 200:
-            return f"I understand. {question}"
-        
-        # Clean up response
-        response = response.strip()
-        
-        # Ensure it ends with question mark
         if not response.endswith('?'):
-            response = f"{response.rstrip('.')}?"
+            response = response + '?'
         
-        return response
+        return response.strip()
+    
+    def _get_fallback_symptom_question(self, patient: PatientProfile, state: ConversationState) -> str:
+        """Fallback symptom-specific questions if LLM generation fails"""
+        
+        symptom_str = ' '.join(patient.symptoms).lower()
+        current_question_num = state.symptom_specific_questions_asked + 1
+        
+        print(f"[DEBUG] Using fallback question #{current_question_num} for symptoms: {symptom_str}")
+        
+        # Question 1: Associated symptoms
+        if current_question_num == 1:
+            if any(s in symptom_str for s in ['dizzy', 'dizziness', 'weak', 'weakness']):
+                return "Are you experiencing any other symptoms like nausea, headache, blurred vision, or chest pain?"
+            elif 'fever' in symptom_str:
+                return "Do you have any other symptoms like cough, body aches, headache, or sore throat?"
+            elif 'pain' in symptom_str:
+                return "Can you describe the pain quality (sharp, dull, throbbing, or burning)?"
+            else:
+                return "Are there any other symptoms you've noticed along with this?"
+        
+        # Question 2: Timing and triggers
+        elif current_question_num == 2:
+            if any(s in symptom_str for s in ['dizzy', 'dizziness']):
+                return "Does the dizziness happen all the time, or is it triggered by certain movements (like standing up or turning your head)?"
+            elif any(s in symptom_str for s in ['weak', 'weakness']):
+                return "Is the weakness constant throughout the day, or does it get worse at certain times?"
+            elif 'pain' in symptom_str:
+                return "When does the pain feel the worst (morning, evening, during activity, at rest)?"
+            else:
+                return "Are your symptoms constant or do they come and go?"
+        
+        # Question 3: Relief and impact
+        else:
+            if any(s in symptom_str for s in ['dizzy', 'dizziness', 'weak', 'weakness']):
+                return "Have you noticed anything that makes you feel better (like rest, eating, drinking fluids)?"
+            elif 'pain' in symptom_str:
+                return "What helps relieve the pain (rest, medications, heat/ice)?"
+            else:
+                return "How are these symptoms affecting your daily activities?"
 
 
 class InformationParser:
@@ -328,67 +736,126 @@ class InformationParser:
     def parse_response(
         self, 
         text: str, 
-        expected_info: str,
-        patient: PatientProfile
-    ) -> bool:
-        """Parse response and update patient profile. Returns True if info extracted."""
+        patient: PatientProfile,
+        state: ConversationState
+    ) -> None:
+        """Parse response and update patient profile"""
         
-        text_lower = text.lower()
+        text_lower = text.lower().strip()
         
-        if expected_info == 'age':
-            age = self._extract_age(text)
-            if age:
-                patient.age = age
-                return True
+        # Check for skip/decline responses
+        skip_phrases = ['skip', 'prefer not to say', 'prefer not to share', 'rather not say', 
+                       'dont want to', "don't want to", 'pass', 'next question']
+        is_skip_response = any(phrase in text_lower for phrase in skip_phrases)
         
-        elif expected_info == 'primary_symptoms':
-            symptoms = self.symptom_extractor.extract(text)
-            if symptoms:
-                patient.symptoms.extend(symptoms)
-                patient.symptoms = list(set(patient.symptoms))
-                return True
+        # Check for "no" as a decline to OPTIONAL questions only (but ONLY for specific questions)
+        is_declining_optional = text_lower in ['no', 'nope', 'nah'] and len(text_lower.split()) <= 2
         
-        elif expected_info == 'symptom_duration':
-            duration = self._extract_duration(text)
-            if duration:
-                patient.duration = duration
-                return True
-        
-        elif expected_info == 'symptom_severity':
-            severity = self._extract_severity(text)
-            if severity:
-                patient.severity = severity
-                return True
-        
-        elif expected_info == 'recent_travel':
-            patient.recent_travel = any(word in text_lower for word in ['yes', 'yeah', 'travelled', 'trip', 'went to'])
-            return True
-        
-        elif expected_info == 'medications':
-            if 'no' not in text_lower or any(med in text_lower for med in ['aspirin', 'ibuprofen', 'tylenol', 'paracetamol']):
-                patient.medications.append(text)
-            return True
-        
-        elif expected_info == 'medical_history':
-            if 'no' not in text_lower:
-                patient.medical_history.append(text)
-            return True
-        
-        elif expected_info == 'dietary_changes':
-            patient.dietary_changes = any(word in text_lower for word in ['yes', 'yeah', 'maybe', 'ate'])
-            return True
-        
-        # Always try to extract symptoms from any response
+        # Always extract symptoms first
         symptoms = self.symptom_extractor.extract(text)
-        if symptoms:
-            patient.symptoms.extend(symptoms)
-            patient.symptoms = list(set(patient.symptoms))
+        print(f"[DEBUG] Extracted symptoms from '{text[:50]}...': {symptoms}")
         
-        return False
+        if symptoms:
+            new_symptoms = [s for s in symptoms if s not in patient.symptoms]
+            if new_symptoms:
+                print(f"[DEBUG] Adding new symptoms: {new_symptoms}")
+            patient.symptoms.extend(new_symptoms)
+            patient.symptoms = list(set(patient.symptoms))
+            if patient.symptoms:
+                state.mark_collected('primary_symptoms')
+                print(f"[DEBUG] Total patient symptoms now: {patient.symptoms}")
+        else:
+            print(f"[DEBUG] No symptoms extracted from this response")
+        
+        # Determine which question we're currently expecting an answer for
+        missing = state.get_missing_info()
+        current_question = missing[0] if missing else None
+        print(f"[DEBUG] Current expected question: {current_question}")
+        
+        # Extract age (OPTIONAL - can skip)
+        if 'age' not in state.collected and 'age' not in state.skipped:
+            if current_question == 'age':  # ONLY process if we're asking for age
+                if is_skip_response or (is_declining_optional and 'age' in missing):
+                    state.mark_skipped('age')
+                    print("[DEBUG] User explicitly declined to provide age")
+                    return  # IMPORTANT: Return immediately, don't process other fields
+                else:
+                    age = self._extract_age(text)
+                    if age:
+                        patient.age = age
+                        state.mark_collected('age')
+                        return  # IMPORTANT: Return after collecting
+        
+        # Extract gender (OPTIONAL - can skip)
+        if 'gender' not in state.collected and 'gender' not in state.skipped:
+            if current_question == 'gender':  # ONLY process if we're asking for gender
+                if is_skip_response or (is_declining_optional and 'gender' in missing):
+                    state.mark_skipped('gender')
+                    print("[DEBUG] User explicitly declined to provide gender")
+                    return  # IMPORTANT: Return immediately
+                else:
+                    gender = self._extract_gender(text)
+                    if gender:
+                        patient.gender = gender
+                        state.mark_collected('gender')
+                        print(f"[DEBUG] Gender extracted and stored: {gender}")
+                        return  # IMPORTANT: Return after collecting
+        
+        # Extract duration (REQUIRED - cannot be skipped)
+        if not patient.duration:
+            if current_question == 'symptom_duration':
+                duration = self._extract_duration(text)
+                if duration:
+                    patient.duration = duration
+                    state.mark_collected('symptom_duration')
+                    print(f"[DEBUG] Duration extracted and marked: {duration}")
+                    return
+        
+        # Extract severity (REQUIRED - cannot be skipped)
+        if not patient.severity and 'symptom_severity' not in state.collected:
+            if current_question == 'symptom_severity':
+                if any(word in text_lower for word in ['rate', 'scale', 'severe', 'mild', 'moderate', 'pain level']) or re.match(r'^\s*\d+\s*$', text):
+                    severity = self._extract_severity(text)
+                    if severity:
+                        patient.severity = severity
+                        state.mark_collected('symptom_severity')
+                        return
+        
+        # Extract medical history (REQUIRED - CANNOT be skipped)
+        if 'medical_history' not in state.collected:
+            basic_info_collected = (
+                'symptom_duration' in state.collected and 
+                'symptom_severity' in state.collected
+            )
+            
+            if basic_info_collected and current_question == 'medical_history':
+                is_medical_history_response = self._is_medical_history_question_response(text_lower)
+                
+                if is_medical_history_response:
+                    medical_history_info = self._extract_medical_history(text)
+                    if medical_history_info is not None:
+                        if medical_history_info:
+                            patient.medical_history.extend(medical_history_info)
+                            patient.medical_history = list(set(patient.medical_history))
+                        state.mark_collected('medical_history')
+                        print(f"[DEBUG] Medical history collected: {patient.medical_history if patient.medical_history else 'None reported'}")
+                        return
+                else:
+                    print("[DEBUG] Not a medical history response yet, waiting for proper answer")
+        
+        # Extract pregnancy status (can be skipped)
+        if patient.gender and patient.gender.lower() in ['female', 'woman', 'f']:
+            if patient.is_pregnant is None:
+                if is_skip_response:
+                    patient.is_pregnant = False
+                    print("[DEBUG] User skipped pregnancy question")
+                else:
+                    pregnancy = self._extract_pregnancy_status(text)
+                    if pregnancy is not None:
+                        patient.is_pregnant = pregnancy
     
     def _extract_age(self, text: str) -> Optional[int]:
         """Extract age from text"""
-        # Look for numbers
         numbers = re.findall(r'\b(\d{1,3})\b', text)
         for num in numbers:
             age = int(num)
@@ -396,30 +863,140 @@ class InformationParser:
                 return age
         return None
     
+    def _extract_gender(self, text: str) -> Optional[str]:
+        """Extract gender from text - FIXED"""
+        text_lower = text.lower().strip()
+        
+        # Check female FIRST to avoid false positives
+        if any(word in text_lower for word in ['female', 'woman', 'girl', 'lady']):
+            return 'female'
+        elif any(word in text_lower for word in ['male', 'man', 'boy', 'gentleman']):
+            # IMPORTANT: Make sure 'female' is not in the text
+            if 'female' not in text_lower:
+                return 'male'
+        
+        # Check for single letter or word responses
+        if text_lower == 'f' or text_lower == 'female':
+            return 'female'
+        elif text_lower == 'm' or text_lower == 'male':
+            return 'male'
+        
+        return None
+    
+    def _is_medical_history_question_response(self, text_lower: str) -> bool:
+        """Check if the response is answering the medical history question"""
+        # If the response is very short
+        if len(text_lower.split()) <= 5:
+            return True
+        
+        # If it contains medical condition keywords
+        medical_keywords = ['diabetes', 'hypertension', 'asthma', 'heart', 'kidney', 
+                          'liver', 'thyroid', 'cancer', 'arthritis', 'epilepsy', 
+                          'stroke', 'copd', 'migraine', 'depression', 'allergy']
+        if any(keyword in text_lower for keyword in medical_keywords):
+            return True
+        
+        # If it's a clear negative response
+        if any(neg in text_lower for neg in ['no', 'none', 'nothing', 'nope', 'not that i know']):
+            return True
+        
+        return False
+    
+    def _extract_medical_history(self, text: str) -> Optional[List[str]]:
+        """Extract medical history from text"""
+        text_lower = text.lower().strip()
+        
+        # Check for negative responses
+        if text_lower in ['no', 'none', 'nope', 'nothing', 'not really', 'no medical history']:
+            print("[DEBUG] Medical history: Negative response detected")
+            return []
+        
+        negative_phrases = ['no medical', 'no chronic', 'nothing', 'not that i know', 
+                           'no history', 'no conditions', "don't have any"]
+        if any(phrase in text_lower for phrase in negative_phrases) and len(text_lower.split()) <= 10:
+            print("[DEBUG] Medical history: Negative phrase detected")
+            return []
+        
+        # Common medical conditions
+        medical_conditions = {
+            'diabetes': ['diabetes', 'diabetic', 'sugar'],
+            'hypertension': ['hypertension', 'high blood pressure', 'bp'],
+            'asthma': ['asthma', 'breathing problem'],
+            'heart disease': ['heart disease', 'cardiac', 'heart problem', 'heart attack', 'angina'],
+            'kidney disease': ['kidney', 'renal'],
+            'liver disease': ['liver', 'hepatitis'],
+            'thyroid': ['thyroid', 'hyperthyroid', 'hypothyroid'],
+            'cancer': ['cancer', 'tumor', 'malignancy'],
+            'arthritis': ['arthritis', 'joint disease'],
+            'epilepsy': ['epilepsy', 'seizures', 'fits'],
+            'stroke': ['stroke', 'cva'],
+            'copd': ['copd', 'emphysema', 'chronic bronchitis'],
+            'migraine': ['migraine', 'chronic headache'],
+            'depression': ['depression', 'anxiety', 'mental health'],
+            'allergies': ['allergy', 'allergies', 'allergic'],
+        }
+        
+        found_conditions = []
+        for condition, keywords in medical_conditions.items():
+            if any(keyword in text_lower for keyword in keywords):
+                found_conditions.append(condition)
+        
+        if found_conditions:
+            print(f"[DEBUG] Medical history: Found conditions: {found_conditions}")
+            return found_conditions
+        
+        # If text contains medical-sounding info but no specific match
+        if len(text.strip()) > 10 and not any(neg in text_lower for neg in ['no', 'none', 'nothing']):
+            print(f"[DEBUG] Medical history: Storing raw text: {text.strip()}")
+            return [text.strip()]
+        
+        return None
+    
     def _extract_duration(self, text: str) -> Optional[str]:
         """Extract duration from text"""
         text_lower = text.lower()
         
-        # Pattern matching
         patterns = [
             (r'(\d+)\s*days?', 'days'),
             (r'(\d+)\s*weeks?', 'weeks'),
             (r'(\d+)\s*months?', 'months'),
+            (r'(\d+)\s*years?', 'years'),
             (r'(\d+)\s*hours?', 'hours'),
         ]
         
         for pattern, unit in patterns:
             match = re.search(pattern, text_lower)
             if match:
-                return f"{match.group(1)} {unit}"
+                number = match.group(1)
+                print(f"[DEBUG] Found duration pattern: {number} {unit}")
+                return f"{number} {unit}"
         
-        # Relative terms
-        if 'yesterday' in text_lower or 'today' in text_lower:
+        if 'yesterday' in text_lower or 'since yesterday' in text_lower:
             return '1 day'
-        if 'week' in text_lower:
+        if 'today' in text_lower or 'this morning' in text_lower:
+            return 'less than 1 day'
+        if 'last week' in text_lower:
             return '1 week'
+        if 'last month' in text_lower:
+            return '1 month'
         
-        return text[:50] if len(text) < 50 else None
+        text_numbers = {
+            'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+            'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+            'couple': '2', 'few': '3', 'several': '3'
+        }
+        
+        for word, num in text_numbers.items():
+            if f'{word} day' in text_lower:
+                return f'{num} days'
+            if f'{word} week' in text_lower:
+                return f'{num} weeks'
+            if f'{word} month' in text_lower:
+                return f'{num} months'
+            if f'{word} year' in text_lower:
+                return f'{num} years'
+        
+        return None
     
     def _extract_severity(self, text: str) -> Optional[str]:
         """Extract severity from text"""
@@ -438,41 +1015,55 @@ class InformationParser:
                     return f"severe ({score}/10)"
         
         # Descriptive terms
-        if any(word in text_lower for word in ['severe', 'extreme', 'unbearable', 'worst']):
+        if any(word in text_lower for word in ['severe', 'extreme', 'unbearable', 'worst', 'terrible', 'intense']):
             return 'severe'
-        if any(word in text_lower for word in ['moderate', 'manageable', 'noticeable']):
+        if any(word in text_lower for word in ['moderate', 'manageable', 'noticeable', 'significant', 'fairly bad']):
             return 'moderate'
-        if any(word in text_lower for word in ['mild', 'slight', 'minor', 'little']):
+        if any(word in text_lower for word in ['mild', 'slight', 'minor', 'little', 'light', 'bearable']):
             return 'mild'
+        
+        return None
+    
+    def _extract_pregnancy_status(self, text: str) -> Optional[bool]:
+        """Extract pregnancy status from text"""
+        text_lower = text.lower()
+        
+        if any(word in text_lower for word in ['yes', 'pregnant', 'expecting', 'i am']):
+            return True
+        elif any(word in text_lower for word in ['no', 'not pregnant', "i'm not", "not"]):
+            return False
         
         return None
 
 
+# [DiagnosisEngine with FIXED triage logic]
+
 class DiagnosisEngine:
-    """Generate diagnosis using MedLlama2"""
+    """Generate diagnosis"""
     
     TRIAGE_CRITERIA = {
-        1: {  # Immediate emergency
+        1: {  # IMMEDIATE EMERGENCY
             'keywords': ['chest pain', 'difficulty breathing', 'severe bleeding', 
-                        'loss of consciousness', 'stroke', 'heart attack', 'severe trauma'],
+                        'loss of consciousness', 'stroke', 'heart attack', 'severe trauma',
+                        'unconscious', 'not breathing', 'severe burn'],
             'severity_min': 9
         },
-        2: {  # Emergency
+        2: {  # URGENT
             'keywords': ['severe pain', 'high fever', 'confusion', 'significant bleeding',
-                        'suspected fracture', 'severe allergic reaction'],
-            'severity_min': 7
+                        'suspected fracture', 'severe allergic reaction', 'dehydration'],
+            'severity_min': 8
         },
-        3: {  # Urgent
+        3: {  # PRIORITY
             'keywords': ['persistent fever', 'significant pain', 'infection signs',
-                        'persistent vomiting', 'dehydration'],
-            'severity_min': 5
+                        'persistent vomiting'],
+            'severity_min': 6
         },
-        4: {  # Semi-urgent
-            'keywords': ['moderate pain', 'persistent symptoms', 'minor infection'],
-            'severity_min': 3
+        4: {  # ROUTINE
+            'keywords': ['moderate pain', 'persistent symptoms', 'minor infection', 'fever'],
+            'severity_min': 4
         },
-        5: {  # Non-urgent
-            'keywords': ['mild symptoms', 'chronic condition management'],
+        5: {  # NON-URGENT
+            'keywords': ['mild symptoms', 'chronic condition management', 'mild pain'],
             'severity_min': 0
         }
     }
@@ -483,33 +1074,23 @@ class DiagnosisEngine:
         'Pulmonology': ['breathing', 'cough', 'lung', 'respiratory', 'asthma', 'pneumonia'],
         'Gastroenterology': ['abdominal pain', 'nausea', 'vomiting', 'diarrhea', 'stomach', 'liver'],
         'Neurology': ['headache', 'migraine', 'numbness', 'seizure', 'stroke', 'confusion', 'dizziness'],
-        'Orthopedics': ['bone', 'joint pain', 'fracture', 'sprain', 'back pain', 'arthritis'],
+        'Orthopedics': ['bone', 'joint pain', 'fracture', 'sprain', 'back pain', 'arthritis', 'leg pain', 'knee pain', 'ankle pain'],
         'Dermatology': ['rash', 'itching', 'skin', 'swelling', 'lesion'],
         'ENT': ['sore throat', 'ear pain', 'hearing', 'runny nose', 'sinus'],
-        'Infectious Disease': ['fever', 'infection', 'sepsis'],
-        'General Medicine': []  # Default
+        'Infectious Disease': ['fever', 'infection', 'sepsis', 'tuberculosis', 'influenza'],
+        'Obstetrics & Gynecology': ['pregnant', 'pregnancy', 'pelvic pain', 'vaginal bleeding', 'missed period'],
+        'General Medicine': []
     }
     
     def __init__(self, ollama_client: OllamaClient):
-        """Initialize diagnosis engine with Ollama client"""
         self.ollama = ollama_client
-        print("✓ Diagnosis engine initialized (using MedLlama2)")
+        print("✓ Diagnosis engine initialized")
     
     def diagnose(self, patient: PatientProfile) -> Dict:
-        """Generate complete diagnosis using MedLlama2"""
-        
-        print("\n[Analyzing patient data with MedLlama2...]")
-        
-        # Get disease predictions from MedLlama2
+        print("\n[Analyzing patient data...]")
         diagnoses = self._get_llm_diagnosis(patient)
-        
-        # Calculate triage level
         triage_level = self._calculate_triage(patient, diagnoses)
-        
-        # Route to department
         department = self._route_department(patient, diagnoses)
-        
-        # Get triage message
         triage_message = self._get_triage_message(triage_level)
         
         return {
@@ -521,72 +1102,44 @@ class DiagnosisEngine:
         }
     
     def _get_llm_diagnosis(self, patient: PatientProfile) -> List[Dict]:
-        """Use MedLlama2 to generate diagnosis"""
-        
-        # Create comprehensive medical prompt
         prompt = self._create_diagnosis_prompt(patient)
-        
-        # Get response from MedLlama2
         response = self.ollama.generate(prompt, max_tokens=500, temperature=0.3)
-        
-        # Parse the response
         diagnoses = self._parse_diagnosis_response(response)
         
-        # Fallback if parsing fails
         if not diagnoses or len(diagnoses) == 0:
             diagnoses = self._fallback_diagnosis(patient)
         
-        return diagnoses[:3]  # Top 3
+        return diagnoses[:3]
     
     def _create_diagnosis_prompt(self, patient: PatientProfile) -> str:
-        """Create structured prompt for diagnosis"""
-        
         prompt = """You are an experienced medical doctor. Based on the patient information below, provide the top 3 most likely differential diagnoses.
 
 PATIENT INFORMATION:
 """
-        
-        # Patient demographics
         if patient.age:
             prompt += f"Age: {patient.age} years\n"
         if patient.gender:
             prompt += f"Gender: {patient.gender}\n"
+        if patient.is_pregnant is not None:
+            prompt += f"Pregnant: {'Yes' if patient.is_pregnant else 'No'}\n"
         
-        # Chief complaints
         if patient.symptoms:
             prompt += f"\nChief Complaints:\n"
             for symptom in patient.symptoms:
                 prompt += f"  - {symptom}\n"
         
-        # Clinical details
         if patient.duration:
             prompt += f"\nDuration: {patient.duration}\n"
         
         if patient.severity:
             prompt += f"Severity: {patient.severity}\n"
         
-        # Medical history
         if patient.medical_history and any(patient.medical_history):
             prompt += f"\nMedical History:\n"
             for item in patient.medical_history:
                 if item and item.lower() not in ['no', 'none', 'nothing']:
                     prompt += f"  - {item}\n"
         
-        # Current medications
-        if patient.medications and any(patient.medications):
-            prompt += f"\nCurrent Medications:\n"
-            for med in patient.medications:
-                if med and med.lower() not in ['no', 'none']:
-                    prompt += f"  - {med}\n"
-        
-        # Risk factors
-        if patient.recent_travel:
-            prompt += f"\nRecent Travel: Yes\n"
-        
-        if patient.dietary_changes:
-            prompt += f"Dietary Changes: Yes\n"
-        
-        # Request structured output
         prompt += """
 TASK: Provide exactly 3 differential diagnoses in this exact format:
 
@@ -596,9 +1149,11 @@ TASK: Provide exactly 3 differential diagnoses in this exact format:
 
 Guidelines:
 - List from most likely to least likely
-- Probability should be realistic (don't use 100%)
-- Consider age, symptoms, duration, and severity
-- Provide actual medical differential diagnoses
+- Probability should be realistic and match the clinical picture
+- For acute symptoms of short duration (days), prioritize common acute conditions
+- For fever of 2-3 days with mild severity, think viral infection, flu, common cold
+- Do NOT suggest rare diseases like tuberculosis for simple short-duration fever
+- Consider age, gender, symptoms, duration, and severity
 - Keep explanations brief and clinical
 
 Your diagnosis:"""
@@ -606,42 +1161,27 @@ Your diagnosis:"""
         return prompt
     
     def _parse_diagnosis_response(self, response: str) -> List[Dict]:
-        """Parse MedLlama2's diagnosis response"""
-        
         diagnoses = []
-        
-        # Split into lines
         lines = response.strip().split('\n')
         
         for line in lines:
             line = line.strip()
-            
-            # Look for numbered lines (1. 2. 3.)
             if re.match(r'^\d+\.\s', line):
                 try:
-                    # Remove number prefix
                     line = re.sub(r'^\d+\.\s*', '', line)
-                    
-                    # Try to extract disease name and probability
-                    # Format: Disease Name - 75% - explanation
                     parts = line.split('-')
                     
                     if len(parts) >= 2:
                         disease_name = parts[0].strip()
-                        
-                        # Extract probability
                         prob_match = re.search(r'(\d+(?:\.\d+)?)\s*%', parts[1])
                         if prob_match:
                             probability = float(prob_match.group(1)) / 100
                         else:
-                            # Default probability based on position
                             probability = 0.7 / (len(diagnoses) + 1)
                         
-                        # Extract explanation if available
                         explanation = '-'.join(parts[2:]).strip() if len(parts) > 2 else parts[1].strip()
                         explanation = re.sub(r'\d+(?:\.\d+)?%', '', explanation).strip()
                         
-                        # Determine confidence level
                         if probability >= 0.7:
                             confidence = 'high'
                         elif probability >= 0.4:
@@ -653,9 +1193,8 @@ Your diagnosis:"""
                             'disease': disease_name,
                             'probability': probability,
                             'confidence': confidence,
-                            'explanation': explanation[:200]  # Limit length
+                            'explanation': explanation[:200]
                         })
-                
                 except Exception as e:
                     print(f"Warning: Could not parse diagnosis line: {line} - {e}")
                     continue
@@ -663,169 +1202,180 @@ Your diagnosis:"""
         return diagnoses
     
     def _fallback_diagnosis(self, patient: PatientProfile) -> List[Dict]:
-        """Fallback diagnosis if LLM parsing fails"""
-        
+        """Improved fallback with realistic diagnoses based on symptoms and duration"""
         symptom_str = ' '.join(patient.symptoms).lower()
+        duration_str = (patient.duration or '').lower()
         diagnoses = []
         
-        # Simple pattern matching
-        patterns = {
-            ('cough', 'fever'): {
-                'disease': 'Upper Respiratory Infection',
-                'probability': 0.75,
-                'explanation': 'Common viral or bacterial infection presenting with respiratory symptoms'
-            },
-            ('headache', 'nausea'): {
-                'disease': 'Migraine',
-                'probability': 0.65,
-                'explanation': 'Primary headache disorder with associated symptoms'
-            },
-            ('abdominal pain', 'nausea'): {
-                'disease': 'Gastroenteritis',
-                'probability': 0.70,
-                'explanation': 'Inflammation of the digestive tract'
-            },
-            ('chest pain', 'shortness of breath'): {
-                'disease': 'Possible Cardiac Event',
-                'probability': 0.60,
-                'explanation': 'Requires immediate medical evaluation'
-            },
-            ('fever', 'fatigue'): {
-                'disease': 'Viral Infection',
-                'probability': 0.70,
-                'explanation': 'Common systemic viral illness'
-            },
-            ('back pain',): {
-                'disease': 'Musculoskeletal Pain',
-                'probability': 0.65,
-                'explanation': 'Muscle strain or mechanical back pain'
-            },
-            ('dizziness', 'weakness'): {
-                'disease': 'Orthostatic Hypotension',
-                'probability': 0.55,
-                'explanation': 'Drop in blood pressure upon standing'
-            }
-        }
+        # Check duration - short duration = acute conditions
+        is_short_duration = any(term in duration_str for term in ['day', 'days', 'hour', 'hours', 'yesterday', 'today'])
         
-        # Find matching patterns
-        for symptoms, diag in patterns.items():
-            if all(s in symptom_str for s in symptoms):
-                diagnoses.append({
-                    'disease': diag['disease'],
-                    'probability': diag['probability'],
+        # Fever-related diagnoses
+        if 'fever' in symptom_str:
+            if is_short_duration:
+                diagnoses = [
+                    {
+                        'disease': 'Viral Upper Respiratory Infection',
+                        'probability': 0.65,
+                        'confidence': 'moderate',
+                        'explanation': 'Common viral infection causing fever and systemic symptoms'
+                    },
+                    {
+                        'disease': 'Influenza',
+                        'probability': 0.25,
+                        'confidence': 'moderate',
+                        'explanation': 'Flu virus causing acute fever and body aches'
+                    },
+                    {
+                        'disease': 'Viral Syndrome',
+                        'probability': 0.10,
+                        'confidence': 'low',
+                        'explanation': 'Non-specific viral illness'
+                    }
+                ]
+            else:
+                diagnoses = [
+                    {
+                        'disease': 'Bacterial Infection',
+                        'probability': 0.50,
+                        'confidence': 'moderate',
+                        'explanation': 'Persistent fever may indicate bacterial infection requiring evaluation'
+                    },
+                    {
+                        'disease': 'Chronic Viral Infection',
+                        'probability': 0.30,
+                        'confidence': 'low',
+                        'explanation': 'Prolonged viral illness'
+                    },
+                    {
+                        'disease': 'Other Infectious Disease',
+                        'probability': 0.20,
+                        'confidence': 'low',
+                        'explanation': 'Requires further diagnostic workup'
+                    }
+                ]
+        
+        # Leg pain-related
+        elif any(s in symptom_str for s in ['leg pain', 'knee pain']):
+            diagnoses = [
+                {
+                    'disease': 'Musculoskeletal Strain',
+                    'probability': 0.60,
                     'confidence': 'moderate',
-                    'explanation': diag['explanation']
-                })
+                    'explanation': 'Muscle or joint strain from overuse or injury'
+                },
+                {
+                    'disease': 'Osteoarthritis',
+                    'probability': 0.30,
+                    'confidence': 'low',
+                    'explanation': 'Degenerative joint disease'
+                },
+                {
+                    'disease': 'Peripheral Neuropathy',
+                    'probability': 0.10,
+                    'confidence': 'low',
+                    'explanation': 'Nerve-related pain'
+                }
+            ]
         
-        # Add generic diagnoses if nothing matches
-        if not diagnoses:
-            diagnoses.append({
-                'disease': 'Further Clinical Evaluation Needed',
-                'probability': 0.0,
-                'confidence': 'low',
-                'explanation': 'Symptoms require in-person medical assessment for accurate diagnosis'
-            })
-        
-        # Ensure we have 3 diagnoses
-        generic_options = [
-            {
-                'disease': 'Viral Syndrome',
-                'probability': 0.50,
-                'confidence': 'moderate',
-                'explanation': 'Non-specific viral illness with systemic symptoms'
-            },
-            {
-                'disease': 'Stress-Related Symptoms',
-                'probability': 0.40,
-                'confidence': 'low',
-                'explanation': 'Physical symptoms potentially related to psychological stress'
-            },
-            {
-                'disease': 'Undifferentiated Illness',
-                'probability': 0.30,
-                'confidence': 'low',
-                'explanation': 'Requires additional diagnostic workup'
-            }
-        ]
-        
-        while len(diagnoses) < 3:
-            diagnoses.append(generic_options[len(diagnoses) - 1])
+        # Default
+        else:
+            diagnoses = [
+                {
+                    'disease': 'Non-specific Illness',
+                    'probability': 0.60,
+                    'confidence': 'low',
+                    'explanation': 'Symptoms require in-person medical evaluation for accurate diagnosis'
+                },
+                {
+                    'disease': 'Viral Syndrome',
+                    'probability': 0.30,
+                    'confidence': 'low',
+                    'explanation': 'General viral illness'
+                },
+                {
+                    'disease': 'Requires Clinical Evaluation',
+                    'probability': 0.10,
+                    'confidence': 'low',
+                    'explanation': 'Further diagnostic workup needed'
+                }
+            ]
         
         return diagnoses[:3]
     
     def _calculate_triage(self, patient: PatientProfile, diagnoses: List[Dict]) -> int:
-        """Calculate triage level (1=immediate, 5=routine)"""
-        
-        # Combine all text for analysis
+        """FIXED: More accurate triage calculation"""
         all_text = ' '.join(
             patient.symptoms + 
             [d['disease'] for d in diagnoses] +
             [d.get('explanation', '') for d in diagnoses]
         ).lower()
         
-        # Check emergency keywords by level
-        for level, criteria in self.TRIAGE_CRITERIA.items():
+        # Check for emergency keywords first
+        for level in [1, 2, 3]:  # Only check emergency levels
+            criteria = self.TRIAGE_CRITERIA[level]
             if any(kw in all_text for kw in criteria['keywords']):
                 return level
         
-        # Severity-based triage
+        # Severity-based triage - FIXED logic
         if patient.severity:
             severity_str = patient.severity.lower()
             
-            if 'severe' in severity_str:
-                return 2
-            
-            # Extract numeric severity
+            # Extract numeric score
             severity_match = re.search(r'(\d+)', patient.severity)
             if severity_match:
                 score = int(severity_match.group(1))
                 if score >= 9:
-                    return 2
+                    return 2  # Urgent
                 elif score >= 7:
-                    return 3
+                    return 3  # Priority
                 elif score >= 5:
-                    return 4
+                    return 4  # Routine
+                else:
+                    return 5  # Non-urgent
+            
+            # Text-based severity
+            if 'severe' in severity_str:
+                return 2
+            elif 'moderate' in severity_str:
+                return 4
+            elif 'mild' in severity_str:
+                return 5
         
-        # Check probabilities - high probability serious conditions
-        serious_conditions = [
-            'heart attack', 'stroke', 'pneumonia', 'appendicitis',
-            'pulmonary embolism', 'sepsis', 'meningitis'
-        ]
+        # Duration-based adjustment for fever
+        if 'fever' in all_text:
+            duration_str = (patient.duration or '').lower()
+            if any(term in duration_str for term in ['day', 'days', '1', '2', '3']):
+                # Short duration fever - routine care
+                return 5
+            else:
+                # Prolonged fever - more urgent
+                return 4
         
-        for diag in diagnoses:
-            if any(cond in diag['disease'].lower() for cond in serious_conditions):
-                if diag['probability'] > 0.5:
-                    return 2
-                elif diag['probability'] > 0.3:
-                    return 3
-        
-        return 5  # Default: routine
+        return 5  # Default: non-urgent
     
     def _route_department(self, patient: PatientProfile, diagnoses: List[Dict]) -> str:
-        """Route to appropriate medical department"""
-        
-        # Combine text for analysis
         all_text = ' '.join(
             patient.symptoms + 
             [d['disease'] for d in diagnoses] +
             [d.get('explanation', '') for d in diagnoses]
         ).lower()
         
-        # Score each department
+        if patient.is_pregnant:
+            return "Obstetrics & Gynecology"
+        
         scores = {}
         for dept, keywords in self.DEPARTMENT_ROUTING.items():
             score = sum(1 for kw in keywords if kw in all_text)
             if score > 0:
                 scores[dept] = score
         
-        # Return department with highest score
         if scores:
             return max(scores, key=scores.get)
         
         return "General Medicine"
     
     def _get_triage_message(self, level: int) -> str:
-        """Get action message for triage level"""
         messages = {
             1: "🚨 IMMEDIATE EMERGENCY - Call 911 or go to ER NOW",
             2: "⚠️ URGENT - Seek emergency care within 1 hour",
@@ -836,6 +1386,8 @@ Your diagnosis:"""
         return messages.get(level, "")
 
 
+# [Rest of the code - ReportGenerator, MedicalOrchestrator, and main() remain the same]
+
 class ReportGenerator:
     """Generate final patient report"""
     
@@ -845,8 +1397,6 @@ class ReportGenerator:
         diagnosis_result: Dict,
         conversation_history: List[Dict]
     ) -> str:
-        """Generate comprehensive medical report"""
-        
         report = []
         report.append("="*70)
         report.append("PATIENT MEDICAL ASSESSMENT REPORT")
@@ -854,30 +1404,38 @@ class ReportGenerator:
         report.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         report.append("")
         
-        # Patient Information
         report.append("PATIENT INFORMATION:")
         report.append("-" * 70)
         if patient.name:
             report.append(f"Name: {patient.name}")
-        report.append(f"Age: {patient.age if patient.age else 'Not provided'}")
-        report.append(f"Gender: {patient.gender if patient.gender else 'Not provided'}")
+        
+        # Show if declined
+        if patient.age:
+            report.append(f"Age: {patient.age}")
+        else:
+            report.append(f"Age: Not provided (patient declined)")
+        
+        if patient.gender:
+            report.append(f"Gender: {patient.gender}")
+        else:
+            report.append(f"Gender: Not provided (patient declined)")
+        
+        if patient.is_pregnant is not None:
+            report.append(f"Pregnant: {'Yes' if patient.is_pregnant else 'No'}")
         report.append("")
         
-        # Chief Complaints
         report.append("CHIEF COMPLAINTS:")
         report.append("-" * 70)
         for i, symptom in enumerate(patient.symptoms, 1):
             report.append(f"  {i}. {symptom.title()}")
         report.append("")
         
-        # Symptom Details
         report.append("SYMPTOM DETAILS:")
         report.append("-" * 70)
         report.append(f"Duration: {patient.duration if patient.duration else 'Not specified'}")
         report.append(f"Severity: {patient.severity if patient.severity else 'Not specified'}")
         report.append("")
         
-        # Medical History
         if patient.medical_history and any(patient.medical_history):
             report.append("MEDICAL HISTORY:")
             report.append("-" * 70)
@@ -886,27 +1444,9 @@ class ReportGenerator:
                     report.append(f"  • {item}")
             report.append("")
         
-        # Current Medications
-        if patient.medications and any(patient.medications):
-            report.append("CURRENT MEDICATIONS:")
-            report.append("-" * 70)
-            for med in patient.medications:
-                if med and med.lower() not in ['no', 'none']:
-                    report.append(f"  • {med}")
-            report.append("")
-        
-        # Additional Factors
-        report.append("ADDITIONAL FACTORS:")
-        report.append("-" * 70)
-        report.append(f"Recent Travel: {'Yes' if patient.recent_travel else 'No'}")
-        report.append(f"Dietary Changes: {'Yes' if patient.dietary_changes else 'No'}")
-        report.append("")
-        
-        # Assessment
         report.append("CLINICAL ASSESSMENT:")
         report.append("="*70)
         
-        # Diagnoses with explanations
         report.append("\nDifferential Diagnoses (ranked by probability):")
         report.append("-" * 70)
         for i, diag in enumerate(diagnosis_result['diagnoses'], 1):
@@ -918,7 +1458,6 @@ class ReportGenerator:
                 report.append(f"   Clinical Note: {diag['explanation']}")
         report.append("")
         
-        # Triage
         report.append("TRIAGE ASSESSMENT:")
         report.append("-" * 70)
         level = diagnosis_result['triage_level']
@@ -926,38 +1465,16 @@ class ReportGenerator:
         report.append(f"Recommendation: {diagnosis_result['triage_message']}")
         report.append("")
         
-        # Department Recommendation
         report.append("CARE PATHWAY:")
         report.append("-" * 70)
         report.append(f"Recommended Department: {diagnosis_result['department']}")
         report.append("")
         
-        # Conversation Summary
-        report.append("CONSULTATION TRANSCRIPT:")
-        report.append("="*70)
-        for i, turn in enumerate(conversation_history, 1):
-            role = turn['role'].title()
-            content = turn['content']
-            # Truncate very long responses
-            if len(content) > 500:
-                content = content[:497] + "..."
-            report.append(f"\n[Turn {i}] {role}:")
-            # Wrap long lines
-            for line in content.split('\n'):
-                if line:
-                    report.append(f"    {line}")
-        report.append("")
-        
-        # Disclaimer
         report.append("="*70)
         report.append("IMPORTANT MEDICAL DISCLAIMER:")
         report.append("-" * 70)
         report.append("This is an AI-assisted preliminary assessment and does NOT constitute")
-        report.append("professional medical advice, diagnosis, or treatment. This assessment is")
-        report.append("based on limited information provided in a text-based conversation and")
-        report.append("should not replace an in-person evaluation by a qualified healthcare")
-        report.append("professional. Please seek immediate medical attention if you are")
-        report.append("experiencing a medical emergency.")
+        report.append("professional medical advice, diagnosis, or treatment.")
         report.append("="*70)
         
         return "\n".join(report)
@@ -971,7 +1488,6 @@ class MedicalOrchestrator:
         print("INITIALIZING MEDICAL DIAGNOSTIC SYSTEM")
         print("="*70)
         
-        # Initialize components
         print("\n1. Connecting to Ollama...")
         self.ollama = OllamaClient(model_name=model_name)
         
@@ -984,112 +1500,106 @@ class MedicalOrchestrator:
         print("4. Loading information parser...")
         self.info_parser = InformationParser(self.symptom_extractor)
         
-        print("5. Initializing diagnosis engine (MedLlama2-powered)...")
+        print("5. Initializing diagnosis engine...")
         self.diagnosis_engine = DiagnosisEngine(self.ollama)
         
         print("6. Loading report generator...")
         self.report_generator = ReportGenerator()
         
-        # Initialize state
         self.reset()
         
         print("\n" + "="*70)
-        print("✅ SYSTEM READY - Using MedLlama2 for diagnosis")
+        print("✅ SYSTEM READY")
         print("="*70 + "\n")
     
     def reset(self):
-        """Reset conversation state"""
         self.patient = PatientProfile()
         self.state = ConversationState()
         self.conversation_history = []
-        self.last_response = ""
-        self.current_expected_info = None
     
     def chat(self, user_input: str) -> Tuple[str, bool, Optional[str]]:
-        """
-        Main chat interface
-        
-        Returns:
-            (response, is_final, report)
-            - response: Bot's response to user
-            - is_final: Whether this is the final diagnosis
-            - report: Full report (only if is_final=True)
-        """
-        
         self.state.turn_count += 1
         
-        # Store user message
         self.conversation_history.append({
             'role': 'user',
             'content': user_input
         })
         
-        # Parse information from user's response
-        if self.current_expected_info:
-            extracted = self.info_parser.parse_response(
-                user_input,
-                self.current_expected_info,
-                self.patient
-            )
-            if extracted:
-                self.state.mark_collected(self.current_expected_info)
+        # Parse information FIRST
+        self.info_parser.parse_response(user_input, self.patient, self.state)
         
-        # Always try to extract symptoms
-        symptoms = self.symptom_extractor.extract(user_input)
-        if symptoms:
-            self.patient.symptoms.extend(symptoms)
-            self.patient.symptoms = list(set(self.patient.symptoms))
-            if self.patient.symptoms:
-                self.state.mark_collected('primary_symptoms')
+        # Get current missing info
+        missing = self.state.get_missing_info()
+        print(f"[DEBUG] After parsing - Missing: {missing}, Collected: {self.state.collected}")
+        
+        # Check if user just answered a symptom-specific question
+        if (not missing and
+            self.state.symptom_question_attempts > 0 and
+            self.state.symptom_specific_questions_asked < self.state.max_symptom_questions and
+            len(user_input.strip()) > 3):
+            
+            print(f"[DEBUG] User answered symptom question, moving to next")
+            self.state.mark_symptom_question_asked()
         
         # Check if ready to diagnose
+        print(f"[DEBUG] Checking if complete: is_complete={self.state.is_complete()}")
         if self.state.is_complete():
+            print("[DEBUG] System is complete, finalizing diagnosis")
             return self._finalize_diagnosis()
         
         # Generate next question
-        missing = self.state.get_missing_info()
-        if missing:
-            self.current_expected_info = missing[0]
-        
+        print("[DEBUG] Generating next question...")
         question = self.question_generator.generate_question(
             self.state,
             self.patient,
             user_input
         )
         
-        if question is None:
-            # Force diagnosis
-            return self._finalize_diagnosis()
+        print(f"[DEBUG] Generated question: {question if question else 'None - should diagnose or continue'}")
         
-        # Store assistant message
+        # FIXED: If None returned from auto-skip, recursively call to get next question
+        if question is None:
+            # Check if we should diagnose
+            if self.state.is_complete():
+                print("[DEBUG] No question generated and complete, forcing diagnosis")
+                return self._finalize_diagnosis()
+            else:
+                # Auto-skip happened, generate next question
+                print("[DEBUG] Auto-skip occurred, generating next question")
+                question = self.question_generator.generate_question(
+                    self.state,
+                    self.patient,
+                    user_input
+                )
+                
+                if question is None:
+                    print("[DEBUG] Still no question after auto-skip, forcing diagnosis")
+                    return self._finalize_diagnosis()
+        
         self.conversation_history.append({
             'role': 'assistant',
             'content': question
         })
         
-        self.last_response = user_input
-        
         return question, False, None
     
     def _finalize_diagnosis(self) -> Tuple[str, bool, str]:
-        """Generate final diagnosis and report"""
+        print("\n[Generating diagnosis...]")
         
-        print("\n[Generating diagnosis with MedLlama2...]")
+        # Add safety check
+        if not self.patient.symptoms:
+            print("[ERROR] No symptoms collected, cannot diagnose")
+            return "I'm sorry, I couldn't collect enough information about your symptoms. Please start over and describe your symptoms.", True, None
         
-        # Run diagnosis engine
         diagnosis_result = self.diagnosis_engine.diagnose(self.patient)
-        
-        # Generate report
         report = self.report_generator.generate_report(
             self.patient,
             diagnosis_result,
             self.conversation_history
         )
         
-        # Create summary response
         response = self._create_summary_response(diagnosis_result)
         
-        # Store final message
         self.conversation_history.append({
             'role': 'assistant',
             'content': response
@@ -1098,21 +1608,17 @@ class MedicalOrchestrator:
         return response, True, report
     
     def _create_summary_response(self, diagnosis_result: Dict) -> str:
-        """Create human-readable summary"""
-        
         lines = []
-        lines.append("\nThank you for providing all that information. Based on our conversation, here is my medical assessment:\n")
+        lines.append("\nThank you for providing that information. Based on our conversation, here is my medical assessment:\n")
         lines.append("="*70)
         lines.append("MEDICAL ASSESSMENT")
         lines.append("="*70 + "\n")
         
-        # Symptoms
         lines.append("📋 SYMPTOMS REPORTED:")
         for symptom in self.patient.symptoms:
             lines.append(f"   • {symptom.title()}")
         lines.append("")
         
-        # Diagnoses with explanations
         lines.append("🔍 DIFFERENTIAL DIAGNOSES:\n")
         for i, diag in enumerate(diagnosis_result['diagnoses'], 1):
             prob = diag['probability'] * 100
@@ -1121,10 +1627,8 @@ class MedicalOrchestrator:
                 lines.append(f"      → {diag['explanation']}")
             lines.append("")
         
-        # Department
         lines.append(f"🏥 RECOMMENDED DEPARTMENT: {diagnosis_result['department']}\n")
         
-        # Triage
         level = diagnosis_result['triage_level']
         message = diagnosis_result['triage_message']
         lines.append(f"⚠️  URGENCY ASSESSMENT:")
@@ -1132,16 +1636,12 @@ class MedicalOrchestrator:
         lines.append(f"    Action: {message}\n")
         
         lines.append("="*70)
-        lines.append("⚠️  CRITICAL DISCLAIMER:")
-        lines.append("    This is a preliminary AI assessment and NOT a medical diagnosis.")
-        lines.append("    Please consult a qualified healthcare professional for proper")
-        lines.append("    medical evaluation, diagnosis, and treatment.")
+        lines.append("⚠️  DISCLAIMER: This is a preliminary AI assessment, not a medical diagnosis.")
         lines.append("="*70)
         
         return "\n".join(lines)
     
     def get_diagnosis_data(self) -> Dict:
-        """Get structured diagnosis data for API"""
         if not self.state.is_complete():
             return None
         
@@ -1155,108 +1655,38 @@ class MedicalOrchestrator:
         }
 
 
-# ============================================================================
-# CLI Interface for Testing
-# ============================================================================
-
 def main():
-    """Command-line interface for testing"""
     import sys
     
-    print("\n" + "="*70)
-    print("MEDICAL DIAGNOSTIC SYSTEM - CLI")
-    print("="*70)
-    print("\nCommands:")
-    print("  'quit' or 'exit' - Exit the system")
-    print("  'reset' - Start a new consultation")
-    print("  'report' - View full report (after diagnosis)")
-    print("="*70)
-    
     try:
-        # Initialize orchestrator (no classifier path needed)
         orchestrator = MedicalOrchestrator(model_name="medllama2")
-        
     except Exception as e:
-        print(f"\n❌ Error initializing system: {e}")
-        print("\nMake sure:")
-        print("  1. Ollama is running: ollama serve")
-        print("  2. Model is available: ollama pull medllama2")
+        print(f"\n❌ Error: {e}")
         sys.exit(1)
     
-    # Start conversation
     print("\nBot: Hello! I'm here to help assess your symptoms.")
     print("     What brings you here today?\n")
     
-    last_report = None
-    
     while True:
         try:
-            # Get user input
             user_input = input("You: ").strip()
             
-            # Handle commands
             if user_input.lower() in ['quit', 'exit']:
-                print("\n👋 Thank you for using the diagnostic system. Take care!")
                 break
-            
-            if user_input.lower() == 'reset':
-                orchestrator.reset()
-                last_report = None
-                print("\n🔄 Consultation reset.\n")
-                print("Bot: Hello! What brings you here today?\n")
-                continue
-            
-            if user_input.lower() == 'report':
-                if last_report:
-                    print("\n" + last_report)
-                else:
-                    print("\n⚠️  No report available yet. Complete the consultation first.\n")
-                continue
             
             if not user_input:
                 continue
             
-            # Process input
             response, is_final, report = orchestrator.chat(user_input)
-            
             print(f"\nBot: {response}\n")
             
-            # Handle final diagnosis
             if is_final:
-                last_report = report
-                
-                # Ask if user wants to see full report
-                show_report = input("\n📄 Would you like to see the full detailed report? (yes/no): ").strip().lower()
-                if show_report in ['yes', 'y']:
+                show = input("\n📄 See full report? (y/n): ").lower()
+                if show == 'y':
                     print("\n" + report)
-                
-                # Ask about saving report
-                save_report = input("\n💾 Would you like to save this report to a file? (yes/no): ").strip().lower()
-                if save_report in ['yes', 'y']:
-                    filename = f"medical_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                    with open(filename, 'w', encoding='utf-8') as f:
-                        f.write(report)
-                    print(f"✅ Report saved to: {filename}")
-                
-                # Ask about new consultation
-                another = input("\n🔄 Start another consultation? (yes/no): ").strip().lower()
-                if another in ['yes', 'y']:
-                    orchestrator.reset()
-                    last_report = None
-                    print("\nBot: Hello! What brings you here today?\n")
-                else:
-                    print("\n👋 Thank you for using the diagnostic system. Take care!")
-                    break
-        
+                break
         except KeyboardInterrupt:
-            print("\n\n👋 Goodbye!")
             break
-        
-        except Exception as e:
-            print(f"\n❌ Error: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
 
 
 if __name__ == "__main__":

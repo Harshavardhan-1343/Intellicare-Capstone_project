@@ -89,8 +89,15 @@ def root():
     """Root endpoint with API information"""
     return jsonify({
         "status": "running",
-        "service": "Medical Diagnostic API",
+        "service": "IntelliCare Medical Diagnostic API",
         "model": MODEL_NAME,
+        "version": "2.0",
+        "features": [
+            "Privacy-respecting (can skip personal questions)",
+            "Medical history collection",
+            "Smart triage system",
+            "Comprehensive differential diagnosis"
+        ],
         "endpoints": {
             "/": "GET - API information",
             "/api/health": "GET - Health check",
@@ -163,9 +170,12 @@ def chat():
             "is_final": True,
             "diagnosis_data": {
                 "triage_level": 1,
-                "triage_level_name": "IMMEDIATE",
+                "triage_level_name": "IMMEDIATE EMERGENCY",
+                "triage_message": "🚨 IMMEDIATE EMERGENCY - Call 911 or go to ER NOW",
                 "recommendation": "Call emergency services immediately",
-                "emergency_detected": True
+                "emergency_detected": True,
+                "diagnoses": [],
+                "department": "Emergency Medicine"
             },
             "report": None
         }
@@ -214,15 +224,38 @@ def chat():
                 # Get diagnosis data from orchestrator
                 diagnosis_data = orchestrator.get_diagnosis_data()
                 
+                # Add triage level name for frontend
+                if diagnosis_data and 'triage_level' in diagnosis_data:
+                    triage_names = {
+                        1: "IMMEDIATE EMERGENCY",
+                        2: "URGENT",
+                        3: "PRIORITY",
+                        4: "ROUTINE",
+                        5: "NON-URGENT"
+                    }
+                    diagnosis_data['triage_level_name'] = triage_names.get(
+                        diagnosis_data['triage_level'], 
+                        "UNKNOWN"
+                    )
+                    # Also add recommendation (alias for triage_message)
+                    diagnosis_data['recommendation'] = diagnosis_data.get('triage_message', '')
+                
                 chat_response["diagnosis_data"] = diagnosis_data
                 chat_response["report"] = report
                 
             except Exception as e:
                 logger.exception(f"Error generating diagnosis data: {e}")
-                chat_response["diagnosis_data"] = {"error": "Could not generate diagnosis data"}
+                chat_response["diagnosis_data"] = {
+                    "error": "Could not generate diagnosis data",
+                    "triage_level": 5,
+                    "triage_level_name": "UNKNOWN",
+                    "diagnoses": [],
+                    "department": "General Medicine",
+                    "triage_message": "Please consult a healthcare professional"
+                }
                 chat_response["report"] = report  # Still include report if available
             
-            # Clean up session
+            # Clean up session after diagnosis
             if session_id in sessions:
                 del sessions[session_id]
                 logger.info(f"Session {session_id} cleaned up")
@@ -247,7 +280,8 @@ def get_session_info(session_id: str):
         "session_id": "uuid",
         "turn_count": 5,
         "symptoms_collected": ["cough", "fever"],
-        "info_collected": ["age", "symptoms", "duration"]
+        "info_collected": ["age", "symptoms", "duration"],
+        "info_skipped": ["gender", "medical_history"]
     }
     """
     if session_id not in sessions:
@@ -262,7 +296,8 @@ def get_session_info(session_id: str):
             "session_id": session_id,
             "turn_count": 0,
             "symptoms_collected": [],
-            "info_collected": []
+            "info_collected": [],
+            "info_skipped": []  # NEW: Track skipped info
         }
         
         # Get turn count from state
@@ -275,8 +310,12 @@ def get_session_info(session_id: str):
                 session_info["symptoms_collected"] = orchestrator.patient.symptoms or []
             
             # Get what information has been collected
-            if hasattr(orchestrator, 'state') and hasattr(orchestrator.state, 'collected'):
-                session_info["info_collected"] = list(orchestrator.state.collected)
+            if hasattr(orchestrator, 'state'):
+                if hasattr(orchestrator.state, 'collected'):
+                    session_info["info_collected"] = list(orchestrator.state.collected)
+                # NEW: Get skipped info
+                if hasattr(orchestrator.state, 'skipped'):
+                    session_info["info_skipped"] = list(orchestrator.state.skipped)
         
         logger.info(f"Session info retrieved for {session_id}")
         return jsonify(session_info), 200
@@ -353,7 +392,7 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
     
-    logger.info(f"Starting Medical Diagnostic API on port {port}")
+    logger.info(f"Starting IntelliCare Medical Diagnostic API on port {port}")
     logger.info(f"Model: {MODEL_NAME}")
     logger.info(f"Debug mode: {debug}")
     
