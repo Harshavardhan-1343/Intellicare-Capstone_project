@@ -402,12 +402,11 @@ class ConversationState:
         self.turn_count = 0
         self.symptom_specific_questions_asked = 0
         self.max_symptom_questions = 3
-        self.max_turns = 15
+        self.max_turns = 12
         self.pregnancy_question_asked = False
         self.question_attempt_count = {}
-        self.last_question_asked = None
-        self.symptom_question_attempts = 0
-        self.is_first_user_message = True
+        self.last_question_asked = None  # NEW: Track last question to avoid repeats
+        self.symptom_question_attempts = 0  # NEW: Track attempts for current symptom question
     
     def mark_collected(self, info_type: str):
         """Mark information as collected"""
@@ -1526,24 +1525,7 @@ class MedicalOrchestrator:
             'content': user_input
         })
         
-        # NEW: Validate ONLY the first user message (when no symptoms collected yet)
-        if self.state.is_first_user_message:
-            self.state.is_first_user_message = False
-            print(f"[DEBUG] Validating first user input: {user_input[:50]}")
-            
-            is_valid, validation_message = self._validate_initial_input(user_input)
-            
-            if not is_valid:
-                print(f"[DEBUG] Invalid initial input detected, ending conversation")
-                self.conversation_history.append({
-                    'role': 'assistant',
-                    'content': validation_message
-                })
-                return validation_message, True, None  # End conversation
-            else:
-                print(f"[DEBUG] Valid medical input detected, continuing")
-        
-        # Parse information
+        # Parse information FIRST
         self.info_parser.parse_response(user_input, self.patient, self.state)
         
         # Get current missing info
@@ -1575,13 +1557,15 @@ class MedicalOrchestrator:
         
         print(f"[DEBUG] Generated question: {question if question else 'None - should diagnose or continue'}")
         
-        # Handle None from auto-skip or completion
+        # FIXED: If None returned from auto-skip, recursively call to get next question
         if question is None:
+            # Check if we should diagnose
             if self.state.is_complete():
                 print("[DEBUG] No question generated and complete, forcing diagnosis")
                 return self._finalize_diagnosis()
             else:
-                print("[DEBUG] No question generated, generating next one")
+                # Auto-skip happened, generate next question
+                print("[DEBUG] Auto-skip occurred, generating next question")
                 question = self.question_generator.generate_question(
                     self.state,
                     self.patient,
@@ -1589,7 +1573,7 @@ class MedicalOrchestrator:
                 )
                 
                 if question is None:
-                    print("[DEBUG] Still no question after retry, forcing diagnosis")
+                    print("[DEBUG] Still no question after auto-skip, forcing diagnosis")
                     return self._finalize_diagnosis()
         
         self.conversation_history.append({
@@ -1598,107 +1582,6 @@ class MedicalOrchestrator:
         })
         
         return question, False, None
-    
-    def _validate_initial_input(self, user_input: str) -> Tuple[bool, str]:
-        """
-        Validate that the initial user input is medical-related.
-        Returns: (is_valid, message)
-        """
-        user_input_lower = user_input.lower().strip()
-        
-        # Check if it's too short (likely not a symptom description)
-        if len(user_input_lower) < 5:
-            return False, "⚠️ Please describe your medical symptoms or health concerns. This system is designed for medical symptom assessment only."
-        
-        # Extract symptoms from input
-        symptoms = self.symptom_extractor.extract(user_input)
-        
-        # If symptoms found, input is valid
-        if symptoms:
-            print(f"[DEBUG] Valid medical input detected. Symptoms: {symptoms}")
-            return True, ""
-        
-        # Check for common non-medical patterns
-        non_medical_patterns = [
-            # Math/calculations
-            r'\d+\s*[\+\-\*\/×÷]\s*\d+',  # 95*96, 5+5, etc.
-            r'what is \d+',
-            r'calculate',
-            r'solve',
-            r'equation',
-            r'answer',
-            
-            # Greetings/casual (but allow if combined with symptoms)
-            r'^(hi|hello|hey|good morning|good evening|sup|yo)$',
-            
-            # Questions about the system
-            r'what can you do',
-            r'how do you work',
-            r'who are you',
-            r'what are you',
-            r'your capabilities',
-            r'your purpose',
-            
-            # Random queries
-            r'weather',
-            r'\btime\b',
-            r'\bdate\b',
-            r'news',
-            r'sports',
-            r'joke',
-            r'story',
-            r'recipe',
-            r'cooking',
-            r'directions',
-            r'navigate',
-            r'movie',
-            r'music',
-            r'game',
-        ]
-        
-        for pattern in non_medical_patterns:
-            if re.search(pattern, user_input_lower):
-                print(f"[DEBUG] Non-medical pattern detected: {pattern}")
-                return False, self._get_rejection_message()
-        
-        # Check for medical keywords that might not be in symptom database
-        medical_keywords = [
-            'pain', 'hurt', 'ache', 'sore', 'sick', 'ill', 'unwell', 'feel',
-            'symptom', 'problem', 'issue', 'concern', 'worried', 'doctor',
-            'hospital', 'medicine', 'medication', 'treatment', 'diagnosis',
-            'suffering', 'uncomfortable', 'discomfort', 'bad', 'terrible',
-            'awful', 'worse', 'better', 'injury', 'injured', 'wound',
-            'bleeding', 'swollen', 'infected', 'infection', 'disease',
-            'condition', 'health', 'medical', 'emergency', 'urgent'
-        ]
-        
-        if any(keyword in user_input_lower for keyword in medical_keywords):
-            print(f"[DEBUG] Medical keyword found, accepting input")
-            return True, ""
-        
-        # If no symptoms and no medical keywords found, reject
-        print(f"[DEBUG] No medical content detected in: {user_input}")
-        return False, self._get_rejection_message()
-    
-    def _get_rejection_message(self) -> str:
-        """Generate a polite rejection message for non-medical queries"""
-        return """⚠️ I'm a medical symptom assessment assistant and can only help with health-related concerns.
-
-Please describe your medical symptoms or health issues, such as:
-- Physical symptoms (pain, fever, nausea, dizziness, etc.)
-- How long you've been experiencing them
-- Any concerns about your health
-
-Examples of valid queries:
-✅ "I have a headache and fever"
-✅ "I'm feeling dizzy and nauseous"
-✅ "I have chest pain that started this morning"
-✅ "My stomach hurts and I've been vomiting"
-✅ "I'm experiencing shortness of breath"
-
-For non-medical questions, please use a general-purpose assistant.
-
-Thank you for understanding! 🏥"""
     
     def _finalize_diagnosis(self) -> Tuple[str, bool, str]:
         print("\n[Generating diagnosis...]")
