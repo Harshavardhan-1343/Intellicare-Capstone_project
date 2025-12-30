@@ -4,6 +4,8 @@ Combines orchestrator-based session management with Flask HTTP methods
 """
 
 import os
+os.environ.pop("SSL_CERT_FILE", None)
+os.environ.pop("REQUESTS_CA_BUNDLE", None)
 import re
 import json
 import logging
